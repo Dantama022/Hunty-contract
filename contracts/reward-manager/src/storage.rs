@@ -1,6 +1,8 @@
 use soroban_sdk::{symbol_short, Address, Env};
 
-use crate::types::{DistributionRecord, RewardPoolConfig, PoolAuditEntry, PoolOperation};
+use crate::types::{
+    DistributionProof, DistributionRecord, PoolAuditEntry, ResolutionStatus, RewardPoolConfig,
+};
 pub struct Storage;
 
 impl Storage {
@@ -18,6 +20,8 @@ impl Storage {
     const DIST_RECORD_KEY: soroban_sdk::Symbol = symbol_short!("DR");
     const DIST_NONCE_KEY: soroban_sdk::Symbol = symbol_short!("DN");
     const DIST_RESOLVE_KEY: soroban_sdk::Symbol = symbol_short!("DRS");
+    const DIST_PROOF_KEY: soroban_sdk::Symbol = symbol_short!("DPRF");
+    const LAST_DIST_TS_KEY: soroban_sdk::Symbol = symbol_short!("LDTS");
     const POOL_KEY: soroban_sdk::Symbol = symbol_short!("POOL");
     const POOL_CFG_KEY: soroban_sdk::Symbol = symbol_short!("PCFG");
     const POOL_DEP_KEY: soroban_sdk::Symbol = symbol_short!("PDEP");
@@ -26,6 +30,12 @@ impl Storage {
     const TOTAL_XLM_DST_KEY: soroban_sdk::Symbol = symbol_short!("TXDST");
     const IN_DISTRIBUTION_KEY: soroban_sdk::Symbol = symbol_short!("IN_DIST");
     const HAS_AUTH_KEY: soroban_sdk::Symbol = symbol_short!("HAUTH");
+    const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("AUDC");
+    const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("AUDL");
+    const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
+    const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
+    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
+    const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 50;
 
     // ========== Admin ==========
 
@@ -161,6 +171,53 @@ impl Storage {
         player: &Address,
     ) -> (soroban_sdk::Symbol, u64, Address) {
         (Self::DIST_RESOLVE_KEY, hunt_id, player.clone())
+    }
+
+    // ========== Distribution Rate Limit (per pool) ==========
+
+    pub fn set_last_distribution_timestamp(env: &Env, hunt_id: u64, timestamp: u64) {
+        let key = (Self::LAST_DIST_TS_KEY, hunt_id);
+        env.storage().persistent().set(&key, &timestamp);
+        // Marker so timestamp 0 (common in tests / genesis) is distinct from "never distributed".
+        let flag_key = (Self::LAST_DIST_TS_KEY, hunt_id, true);
+        env.storage().persistent().set(&flag_key, &true);
+    }
+
+    pub fn get_last_distribution_timestamp(env: &Env, hunt_id: u64) -> Option<u64> {
+        let flag_key = (Self::LAST_DIST_TS_KEY, hunt_id, true);
+        if !env.storage().persistent().get(&flag_key).unwrap_or(false) {
+            return None;
+        }
+        let key = (Self::LAST_DIST_TS_KEY, hunt_id);
+        Some(env.storage().persistent().get(&key).unwrap_or(0))
+    }
+
+    // ========== Distribution Proof / Receipt ==========
+
+    pub fn set_distribution_proof(
+        env: &Env,
+        hunt_id: u64,
+        player: &Address,
+        proof: &DistributionProof,
+    ) {
+        let key = Self::distribution_proof_key(hunt_id, player);
+        env.storage().persistent().set(&key, proof);
+    }
+
+    pub fn get_distribution_proof(
+        env: &Env,
+        hunt_id: u64,
+        player: &Address,
+    ) -> Option<DistributionProof> {
+        let key = Self::distribution_proof_key(hunt_id, player);
+        env.storage().persistent().get(&key)
+    }
+
+    fn distribution_proof_key(
+        hunt_id: u64,
+        player: &Address,
+    ) -> (soroban_sdk::Symbol, u64, Address) {
+        (Self::DIST_PROOF_KEY, hunt_id, player.clone())
     }
 
     // ========== Reward Pool Balance (per hunt) ==========

@@ -1,9 +1,44 @@
-use soroban_sdk::{contracttype, Address, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Vec};
 
 pub use reward_interface::{
     resolve_tier_amount, tiers_are_strictly_ascending, RewardConfig, TierError,
     TimeBasedRewardTier,
 };
+
+/// How XLM rewards are calculated from the pool at distribution time.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DistributionMode {
+    /// Fixed amount supplied by the caller (`RewardConfig.xlm_amount`).
+    Fixed = 0,
+    /// Share of the pool: `(player_score / total_scores) * pool_balance`.
+    Proportional = 1,
+}
+
+/// On-chain receipt / proof of a completed reward distribution.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DistributionProof {
+    /// Pool / hunt identifier.
+    pub pool_id: u64,
+    /// Recipient of the distribution.
+    pub player: Address,
+    /// XLM amount distributed (stroops).
+    pub amount: i128,
+    /// Ledger timestamp when the distribution was recorded.
+    pub timestamp: u64,
+    /// SHA-256 over (pool_id, player, amount, timestamp).
+    pub hash: BytesN<32>,
+}
+
+/// Resolution outcome for a manually resolved failed distribution.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    Completed,
+    Refunded,
+}
 
 /// Semantic versioning struct.
 #[contracttype]
@@ -68,6 +103,14 @@ pub struct RewardPoolConfig {
     /// the appropriate tier's `xlm_amount` is selected at distribution time
     /// based on the player's (completion_time - registration_time) elapsed.
     pub time_based_tiers: Vec<TimeBasedRewardTier>,
+    /// Target funding amount for the pool (stroops). 0 means no target;
+    /// funded events will report 0% progress.
+    pub target_amount: i128,
+    /// Minimum seconds between distributions from this pool. 0 disables
+    /// per-pool distribution rate limiting.
+    pub min_distribution_interval_secs: u64,
+    /// Fixed (caller-supplied amount) or proportional-to-score distribution.
+    pub distribution_mode: DistributionMode,
 }
 
 /// Full status of a reward pool, returned by get_reward_pool().

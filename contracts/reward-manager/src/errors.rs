@@ -60,4 +60,18 @@ pub enum RewardErrorCode {
 
     /// No pending failed NFT mint found for retry.
     NftMintPendingNotFound = 23,
+
+    /// No distribution record exists for the given hunt/player pair.
+    DistributionNotFound = 24,
+
+    /// Distribution attempted before the pool's minimum interval elapsed.
+    /// Remaining cooldown seconds are published on the `DIST_CD` event and
+    /// available via `get_distribution_cooldown_remaining`.
+    DistributionRateLimited = 25,
+
+    /// Proportional distribution rejected: total_scores was zero or score invalid.
+    InvalidScore = 26,
+
+    /// Provided distribution proof hash does not match on-chain receipt.
+    InvalidDistributionProof = 27,
 }
