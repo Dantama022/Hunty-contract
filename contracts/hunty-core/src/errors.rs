@@ -43,6 +43,7 @@ pub enum HuntErrorCode {
     AddressBlacklisted = 36,
     ContractPaused = 37,
     InvalidMaxAttempts = 38,
+    AttemptCooldownNotExpired = 39,
 }
 
 #[derive(Debug)]
@@ -83,6 +84,7 @@ pub enum HuntError {
     InvalidTimeBonusConfig,
     AddressBlacklisted,
     ContractPaused,
+    AttemptCooldownNotExpired { cooldown_remaining: u64 },
 }
 
 impl fmt::Display for HuntError {
@@ -218,6 +220,9 @@ impl fmt::Display for HuntError {
             HuntError::ContractPaused => {
                 write!(f, "Contract is currently paused")
             }
+            HuntError::AttemptCooldownNotExpired { cooldown_remaining } => {
+                write!(f, "Attempt cooldown not expired. Try again in {} seconds", cooldown_remaining)
+            }
         }
     }
 }
@@ -261,6 +266,7 @@ impl From<HuntError> for HuntErrorCode {
             HuntError::InvalidTimeBonusConfig => HuntErrorCode::InvalidTimeBonusConfig,
             HuntError::AddressBlacklisted => HuntErrorCode::AddressBlacklisted,
             HuntError::ContractPaused => HuntErrorCode::ContractPaused,
+            HuntError::AttemptCooldownNotExpired { .. } => HuntErrorCode::AttemptCooldownNotExpired,
         }
     }
 }

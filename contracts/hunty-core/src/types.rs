@@ -80,6 +80,7 @@ pub struct Hunt {
     pub max_submissions_per_minute: u32,
     pub max_attempts_per_clue: u32,
     pub start_multiplier_bps: u32,
+    pub attempt_cooldown_secs: u32,
 }
 
 /// Stored clue with SHA256 answer hash. The hash is never exposed via get_clue/list_clues or events.
@@ -145,6 +146,7 @@ pub struct StoredPlayerProgress {
     /// Packed boolean flags: bit 0 = is_completed, bit 1 = reward_claimed
     pub flags: u32,
     pub recent_submissions: Vec<u64>,
+    pub clue_last_attempts: Map<u32, u64>,
 }
 
 /// Public view of player progress, with `player` and `hunt_id` reconstructed from the key.
@@ -160,6 +162,7 @@ pub struct PlayerProgress {
     pub is_completed: bool,
     pub reward_claimed: bool,
     pub recent_submissions: Vec<u64>,
+    pub clue_last_attempts: Map<u32, u64>,
 }
 
 impl PlayerProgress {
@@ -174,6 +177,7 @@ impl PlayerProgress {
             is_completed: false,
             reward_claimed: false,
             recent_submissions: Vec::new(env),
+            clue_last_attempts: Map::new(env),
         }
     }
 
@@ -208,6 +212,7 @@ impl PlayerProgress {
             completed_at: self.completed_at,
             flags: Self::bools_to_flags(self.is_completed, self.reward_claimed),
             recent_submissions: self.recent_submissions.clone(),
+            clue_last_attempts: self.clue_last_attempts.clone(),
         }
     }
 
@@ -223,6 +228,7 @@ impl PlayerProgress {
             is_completed: Self::flags_to_is_completed(stored.flags),
             reward_claimed: Self::flags_to_reward_claimed(stored.flags),
             recent_submissions: stored.recent_submissions,
+            clue_last_attempts: stored.clue_last_attempts,
         }
     }
 
