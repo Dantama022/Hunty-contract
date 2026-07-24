@@ -321,6 +321,7 @@ impl RewardManager {
             creator: creator.clone(),
             min_distribution_amount,
             time_based_tiers: Vec::new(&env),
+            expiration_time: 0,
         };
         Storage::set_pool_config(&env, hunt_id, &config);
 
@@ -586,6 +587,104 @@ impl RewardManager {
         Ok(())
     }
 
+    /// Configures the expiration timestamp of a reward pool. Only the pool creator can call this.
+    pub fn set_pool_expiration(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        expiration_time: u64,
+    ) -> Result<(), RewardErrorCode> {
+        #[cfg(not(test))]
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        config.expiration_time = expiration_time;
+        Storage::set_pool_config(&env, hunt_id, &config);
+
+        Ok(())
+    }
+
+    /// Reclaims unused reward pool funds back to the creator after the hunt's end_time.
+    /// Only callable by the pool creator.
+    pub fn refund_expired_pool(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+    ) -> Result<(), RewardErrorCode> {
+        #[cfg(not(test))]
+        creator.require_auth();
+
+        let pool_config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+        if creator != pool_config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        // Validate time against hunt end_time via cross-contract call
+        if let Some(hunty_core) = Storage::get_hunty_core(&env) {
+            let mut args: Vec<Val> = Vec::new(&env);
+            args.push_back(hunt_id.into_val(&env));
+
+            let end_time: u64 = match env.try_invoke_contract::<u64, Val>(
+                &hunty_core,
+                &Symbol::new(&env, "get_hunt_end_time"),
+                args,
+            ) {
+                Ok(Ok(t)) => t,
+                _ => return Err(RewardErrorCode::HuntNotFound),
+            };
+
+            let current_time = env.ledger().timestamp();
+            if end_time == 0 || current_time < end_time {
+                return Err(RewardErrorCode::InvalidConfig);
+            }
+        } else {
+            // Fallback: check expiration_time if hunty_core is not set
+            let current_time = env.ledger().timestamp();
+            if pool_config.expiration_time == 0 || current_time < pool_config.expiration_time {
+                return Err(RewardErrorCode::InvalidConfig);
+            }
+        }
+
+        let balance = Storage::get_pool_balance(&env, hunt_id);
+        if balance == 0 {
+            return Ok(());
+        }
+
+        let xlm_token = Storage::get_xlm_token(&env).ok_or(RewardErrorCode::NotInitialized)?;
+        let contract_addr = env.current_contract_address();
+        let client = soroban_sdk::token::Client::new(&env, &xlm_token);
+        client.transfer(&contract_addr, &creator, &balance);
+
+        Storage::set_pool_balance(&env, hunt_id, 0);
+
+        // Emit PoolRefunded event
+        let event = PoolRefundedEvent {
+            hunt_id,
+            creator: creator.clone(),
+            amount: balance,
+        };
+        env.events().publish(
+            (Symbol::new(&env, "PoolRefunded"), hunt_id),
+            event,
+        );
+
+        let audit_entry = PoolAuditEntry {
+            actor: creator.clone(),
+            operation: PoolOperation::Withdraw,
+            timestamp: env.ledger().timestamp(),
+            amount: Some(balance),
+        };
+        Storage::append_audit_entry(&env, hunt_id, audit_entry);
+
+        Ok(())
+    }
+
     /// Returns the full status of a reward pool, including balance, totals, and configuration.
     /// Returns None if no pool has been created for the given hunt_id.
     pub fn get_reward_pool(env: Env, hunt_id: u64) -> Option<RewardPoolStatus> {
@@ -600,6 +699,7 @@ impl RewardManager {
             total_distributed,
             creator: config.creator,
             min_distribution_amount: config.min_distribution_amount,
+            expiration_time: config.expiration_time,
         })
     }
 

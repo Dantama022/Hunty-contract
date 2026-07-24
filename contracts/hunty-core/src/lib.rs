@@ -176,6 +176,8 @@ impl HuntyCore {
             max_submissions_per_minute,
             max_attempts_per_clue: 5,
             start_multiplier_bps: start_multiplier_bps.unwrap_or(20000),
+            max_players: 0,
+            remaining_slots: 0,
         };
 
         // Store the hunt
@@ -227,6 +229,7 @@ impl HuntyCore {
 
         let template_clues = Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
         let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+        hunt.max_players = template_hunt.max_players;
 
         for i in 0..template_clues.len() {
             let clue = template_clues.get(i).unwrap();
@@ -366,6 +369,34 @@ impl HuntyCore {
             .publish((Symbol::new(&env, "HuntDescriptionUpdated"), hunt_id), event);
 
         Ok(())
+    }
+
+    /// Sets the maximum players for a hunt. Only the hunt creator can set it, and only in Draft status.
+    pub fn set_max_players(
+        env: Env,
+        hunt_id: u64,
+        caller: Address,
+        max_players: u32,
+    ) -> Result<(), HuntErrorCode> {
+        caller.require_auth();
+
+        let mut hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
+        if hunt.creator != caller {
+            return Err(HuntErrorCode::Unauthorized);
+        }
+        if hunt.status != HuntStatus::Draft {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+
+        hunt.max_players = max_players;
+        Storage::save_hunt(&env, &hunt);
+        Ok(())
+    }
+
+    /// Exposes the end time of a hunt.
+    pub fn get_hunt_end_time(env: Env, hunt_id: u64) -> Result<u64, HuntErrorCode> {
+        let hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+        Ok(hunt.end_time)
     }
 
     /// Adds a clue to a hunt. Only the hunt creator can add clues.
@@ -1255,6 +1286,13 @@ impl HuntyCore {
 
         if Storage::get_player_progress(&env, hunt_id, &player).is_some() {
             return Err(HuntErrorCode::DuplicateRegistration);
+        }
+
+        if hunt.max_players > 0 {
+            let count = Storage::get_player_count(&env, hunt_id);
+            if count >= hunt.max_players {
+                return Err(HuntErrorCode::HuntFull);
+            }
         }
 
         let progress = PlayerProgress::new(&env, player.clone(), hunt_id, current_time);
@@ -2338,11 +2376,6 @@ pub fn get_health_dashboard(env: Env) -> monitoring::ContractHealth {
     }
 }
 
-// -----------------------------------------------------------------------------
-// View-Only Access Management
-// -----------------------------------------------------------------------------
-
-pub fn add_view_only_access(
 mod admin;
 mod errors;
 mod migration;

@@ -68,6 +68,8 @@ pub struct RewardPoolConfig {
     /// the appropriate tier's `xlm_amount` is selected at distribution time
     /// based on the player's (completion_time - registration_time) elapsed.
     pub time_based_tiers: Vec<TimeBasedRewardTier>,
+    /// Optional expiration timestamp. 0 means no expiration.
+    pub expiration_time: u64,
 }
 
 /// Full status of a reward pool, returned by get_reward_pool().
@@ -84,6 +86,8 @@ pub struct RewardPoolStatus {
     pub creator: Address,
     /// Minimum XLM per distribution (0 = no minimum).
     pub min_distribution_amount: i128,
+    /// Configured pool expiration timestamp.
+    pub expiration_time: u64,
 }
 
 /// Pending NFT mint that failed and can be retried by the admin.
@@ -136,4 +140,12 @@ pub struct PoolAuditEntry {
     pub timestamp: u64,
     /// The XLM amount involved, if applicable.
     pub amount: Option<i128>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PoolRefundedEvent {
+    pub hunt_id: u64,
+    pub creator: Address,
+    pub amount: i128,
 }

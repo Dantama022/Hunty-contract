@@ -44,6 +44,7 @@ pub enum HuntErrorCode {
     ContractPaused = 37,
     InvalidMaxAttempts = 38,
     InvalidWeight = 39,
+    HuntFull = 40,
 }
 
 #[derive(Debug)]
@@ -85,6 +86,7 @@ pub enum HuntError {
     AddressBlacklisted,
     ContractPaused,
     InvalidWeight { value: u32 },
+    HuntFull { hunt_id: u64 },
 }
 
 impl fmt::Display for HuntError {
@@ -223,6 +225,9 @@ impl fmt::Display for HuntError {
             HuntError::InvalidWeight { value } => {
                 write!(f, "Invalid weight value: {} (must be > 0)", value)
             }
+            HuntError::HuntFull { hunt_id } => {
+                write!(f, "Hunt is full (max players reached): ID {}", hunt_id)
+            }
         }
     }
 }
@@ -267,6 +272,7 @@ impl From<HuntError> for HuntErrorCode {
             HuntError::AddressBlacklisted => HuntErrorCode::AddressBlacklisted,
             HuntError::ContractPaused => HuntErrorCode::ContractPaused,
             HuntError::InvalidWeight { .. } => HuntErrorCode::InvalidWeight,
+            HuntError::HuntFull { .. } => HuntErrorCode::HuntFull,
         }
     }
 }

@@ -81,6 +81,8 @@ pub struct Hunt {
     pub max_submissions_per_minute: u32,
     pub max_attempts_per_clue: u32,
     pub start_multiplier_bps: u32,
+    pub max_players: u32,
+    pub remaining_slots: u32,
 }
 
 /// Stored clue with SHA256 answer hash. The hash is never exposed via get_clue/list_clues or events.

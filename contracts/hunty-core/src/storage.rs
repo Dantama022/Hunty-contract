@@ -145,8 +145,8 @@ impl Storage {
     /// * `Some(Hunt)` if the hunt exists, `None` otherwise
     pub fn get_hunt(env: &Env, hunt_id: u64) -> Option<Hunt> {
         let key = Self::hunt_key(hunt_id);
-        let result: Option<Hunt> = env.storage().persistent().get(&key);
-        if let Some(ref hunt) = result {
+        let mut result: Option<Hunt> = env.storage().persistent().get(&key);
+        if let Some(ref mut hunt) = result {
             let policy = match hunt.status {
                 crate::types::HuntStatus::Active => TtlPolicy::Active,
                 crate::types::HuntStatus::Completed | crate::types::HuntStatus::Cancelled => {
@@ -155,6 +155,15 @@ impl Storage {
                 _ => TtlPolicy::Default,
             };
             extend_ttl(env, &key, policy);
+
+            // Dynamically calculate remaining slots
+            let count_key = Self::player_count_key(hunt_id);
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+            hunt.remaining_slots = if hunt.max_players == 0 {
+                0
+            } else {
+                hunt.max_players.saturating_sub(count)
+            };
         }
         result
     }
@@ -609,6 +618,11 @@ impl Storage {
             }
         }
         addrs
+    }
+
+    pub fn get_player_count(env: &Env, hunt_id: u64) -> u32 {
+        let count_key = Self::player_count_key(hunt_id);
+        env.storage().persistent().get(&count_key).unwrap_or(0)
     }
 
     // ========== Hunt Counter Functions ==========
