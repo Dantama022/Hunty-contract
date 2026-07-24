@@ -68,6 +68,9 @@ pub struct RewardPoolConfig {
     /// the appropriate tier's `xlm_amount` is selected at distribution time
     /// based on the player's (completion_time - registration_time) elapsed.
     pub time_based_tiers: Vec<TimeBasedRewardTier>,
+    /// Address of the SAC-compatible token contract for this reward pool.
+    /// Supports XLM and other Stellar Asset Contract tokens (e.g., USDC).
+    pub token_address: Address,
 }
 
 /// Full status of a reward pool, returned by get_reward_pool().
@@ -136,4 +139,14 @@ pub struct PoolAuditEntry {
     pub timestamp: u64,
     /// The XLM amount involved, if applicable.
     pub amount: Option<i128>,
+}
+
+/// Resolution status for failed distributions.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    /// Distribution completed successfully.
+    Completed,
+    /// Distribution refunded to pool.
+    Refunded,
 }

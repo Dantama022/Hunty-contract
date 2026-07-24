@@ -60,4 +60,10 @@ pub enum RewardErrorCode {
 
     /// No pending failed NFT mint found for retry.
     NftMintPendingNotFound = 23,
+
+    /// Invalid or non-SAC-compatible token contract address.
+    InvalidTokenContract = 24,
+
+    /// Distribution record not found for the specified hunt and player.
+    DistributionNotFound = 25,
 }
