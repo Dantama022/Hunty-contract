@@ -43,6 +43,9 @@ pub enum HuntErrorCode {
     AddressBlacklisted = 36,
     ContractPaused = 37,
     InvalidMaxAttempts = 38,
+    HuntIsPrivate = 39,
+    InvalidInviteCode = 40,
+    InviteNotConfigured = 41,
 }
 
 #[derive(Debug)]
@@ -83,6 +86,9 @@ pub enum HuntError {
     InvalidTimeBonusConfig,
     AddressBlacklisted,
     ContractPaused,
+    HuntIsPrivate { hunt_id: u64 },
+    InvalidInviteCode { hunt_id: u64 },
+    InviteNotConfigured { hunt_id: u64 },
 }
 
 impl fmt::Display for HuntError {
@@ -218,6 +224,15 @@ impl fmt::Display for HuntError {
             HuntError::ContractPaused => {
                 write!(f, "Contract is currently paused")
             }
+            HuntError::HuntIsPrivate { hunt_id } => {
+                write!(f, "Hunt {} is private — use register_with_invite with a valid invite code", hunt_id)
+            }
+            HuntError::InvalidInviteCode { hunt_id } => {
+                write!(f, "Invalid invite code for hunt {}", hunt_id)
+            }
+            HuntError::InviteNotConfigured { hunt_id } => {
+                write!(f, "Private hunt {} has no invite code configured; generate one before activating", hunt_id)
+            }
         }
     }
 }
@@ -261,6 +276,9 @@ impl From<HuntError> for HuntErrorCode {
             HuntError::InvalidTimeBonusConfig => HuntErrorCode::InvalidTimeBonusConfig,
             HuntError::AddressBlacklisted => HuntErrorCode::AddressBlacklisted,
             HuntError::ContractPaused => HuntErrorCode::ContractPaused,
+            HuntError::HuntIsPrivate { .. } => HuntErrorCode::HuntIsPrivate,
+            HuntError::InvalidInviteCode { .. } => HuntErrorCode::InvalidInviteCode,
+            HuntError::InviteNotConfigured { .. } => HuntErrorCode::InviteNotConfigured,
         }
     }
 }

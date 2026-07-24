@@ -80,6 +80,12 @@ pub struct Hunt {
     pub max_submissions_per_minute: u32,
     pub max_attempts_per_clue: u32,
     pub start_multiplier_bps: u32,
+    /// Whether this hunt is invite-only. When true, players must provide a valid
+    /// invite code via `register_with_invite` instead of `register_player`.
+    pub is_private: bool,
+    /// SHA256 hash of the invite code (salted with hunt_id). Only set for private hunts.
+    /// When `None` and `is_private` is true, the hunt cannot be activated.
+    pub invite_code_hash: Option<BytesN<32>>,
 }
 
 /// Stored clue with SHA256 answer hash. The hash is never exposed via get_clue/list_clues or events.
@@ -364,6 +370,31 @@ pub struct ClueAddedEvent {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct PlayerRegisteredEvent {
+    pub hunt_id: u64,
+    pub player: Address,
+}
+
+/// Emitted when a hunt creator generates or updates the invite code for a private hunt.
+/// The invite code itself is never emitted or stored — only its hash.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InviteCodeGeneratedEvent {
+    pub hunt_id: u64,
+    pub creator: Address,
+}
+
+/// Emitted when a hunt creator clears the invite code, pausing new registrations.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InviteCodeRevokedEvent {
+    pub hunt_id: u64,
+    pub creator: Address,
+}
+
+/// Emitted when a player successfully registers using an invite code.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PlayerRegisteredWithInviteEvent {
     pub hunt_id: u64,
     pub player: Address,
 }
