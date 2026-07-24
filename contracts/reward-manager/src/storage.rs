@@ -1,6 +1,6 @@
 use soroban_sdk::{symbol_short, Address, Env};
 
-use crate::types::{DistributionRecord, RewardPoolConfig, PoolAuditEntry, PoolOperation};
+use crate::types::{DistributionRecord, PoolAuditEntry, PoolOperation, ResolutionStatus, RewardPoolConfig};
 pub struct Storage;
 
 impl Storage {
@@ -26,6 +26,10 @@ impl Storage {
     const TOTAL_XLM_DST_KEY: soroban_sdk::Symbol = symbol_short!("TXDST");
     const IN_DISTRIBUTION_KEY: soroban_sdk::Symbol = symbol_short!("IN_DIST");
     const HAS_AUTH_KEY: soroban_sdk::Symbol = symbol_short!("HAUTH");
+    // Per-pool distribution count
+    const POOL_DIST_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("PDCNT");
+    // Per-pool last distribution timestamp
+    const POOL_LAST_DIST_TS_KEY: soroban_sdk::Symbol = symbol_short!("PLDTS");
 
     // ========== Admin ==========
 
@@ -222,6 +226,35 @@ impl Storage {
             .persistent()
             .get(&Self::TOTAL_XLM_DST_KEY)
             .unwrap_or(0)
+    }
+
+    // ========== Pool Distribution Count & Last Timestamp ==========
+
+    pub fn set_pool_distribution_count(env: &Env, hunt_id: u64, count: u64) {
+        let key = (Self::POOL_DIST_COUNT_KEY, hunt_id);
+        env.storage().persistent().set(&key, &count);
+    }
+
+    pub fn get_pool_distribution_count(env: &Env, hunt_id: u64) -> u64 {
+        let key = (Self::POOL_DIST_COUNT_KEY, hunt_id);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    pub fn increment_pool_distribution_count(env: &Env, hunt_id: u64) -> u64 {
+        let current = Self::get_pool_distribution_count(env, hunt_id);
+        let new = current + 1;
+        Self::set_pool_distribution_count(env, hunt_id, new);
+        new
+    }
+
+    pub fn set_pool_last_distribution_timestamp(env: &Env, hunt_id: u64, timestamp: u64) {
+        let key = (Self::POOL_LAST_DIST_TS_KEY, hunt_id);
+        env.storage().persistent().set(&key, &timestamp);
+    }
+
+    pub fn get_pool_last_distribution_timestamp(env: &Env, hunt_id: u64) -> u64 {
+        let key = (Self::POOL_LAST_DIST_TS_KEY, hunt_id);
+        env.storage().persistent().get(&key).unwrap_or(0)
     }
 
     // Daily pool cap getters/setters

@@ -124,6 +124,30 @@ pub enum PoolOperation {
     Withdraw,
 }
 
+/// Resolution status for admin-resolved distributions.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    Completed,
+    Refunded,
+}
+
+/// Comprehensive statistics for a reward pool, returned by get_pool_statistics().
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RewardPoolStatistics {
+    /// Total XLM funded (deposited) into the pool.
+    pub total_funded: i128,
+    /// Total XLM distributed from the pool.
+    pub total_distributed: i128,
+    /// Number of successful distributions made from this pool.
+    pub distribution_count: u64,
+    /// Average XLM amount per distribution (0 if none).
+    pub avg_distribution: i128,
+    /// Ledger timestamp of the most recent distribution (0 if none).
+    pub last_distribution_timestamp: u64,
+}
+
 /// A single entry in the pool audit log.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
