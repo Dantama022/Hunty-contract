@@ -274,8 +274,6 @@ impl HuntyCore {
         Ok(hunt_id)
     }
 
-    }
-
     pub fn set_time_bonus_config(
         env: Env,
         hunt_id: u64,
