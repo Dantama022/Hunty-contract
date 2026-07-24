@@ -212,11 +212,14 @@ impl HuntyCore {
         // Load template hunt
         let template_hunt = Storage::get_hunt(&env, template_hunt_id)
             .ok_or(HuntErrorCode::HuntNotFound)?;
-        // Only original creator can clone
+        // Ensure the template hunt is completed before cloning
+        if template_hunt.status != HuntStatus::Completed {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+        // Only the original creator can clone the hunt
         if caller != template_hunt.creator {
             return Err(HuntErrorCode::Unauthorized);
         }
-        // Create a new hunt using the template's configuration
         let hunt_id = Self::create_hunt(
             env.clone(),
             caller.clone(),
@@ -261,62 +264,16 @@ impl HuntyCore {
         }
         // Persist the updated hunt metadata
         Storage::save_hunt(&env, &hunt);
+        // Emit HuntCloned event
+        let clone_event = HuntClonedEvent {
+            original_hunt_id: template_hunt_id,
+            new_hunt_id: hunt_id,
+            creator: caller.clone(),
+        };
+        env.events().publish((Symbol::new(&env, "HuntCloned"), hunt_id), clone_event);
         Ok(hunt_id)
     }
 
-        let template_hunt =
-            Storage::get_hunt(&env, template_hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
-
-        if template_hunt.status != HuntStatus::Completed {
-            return Err(HuntErrorCode::InvalidHuntStatus);
-        }
-
-        let hunt_id = Self::create_hunt(
-            env.clone(),
-            creator.clone(),
-            title,
-            description,
-            start_time,
-            end_time,
-            template_hunt.max_submissions_per_minute,
-            Some(template_hunt.start_multiplier_bps),
-        )?;
-
-        let template_clues = Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
-        let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
-
-        for i in 0..template_clues.len() {
-            let clue = template_clues.get(i).unwrap();
-            let cloned_clue = Clue {
-                clue_id: Storage::next_clue_id(&env, hunt_id),
-                question: clue.question,
-                answer_hashes: clue.answer_hashes,
-                points: clue.points,
-                is_required: clue.is_required,
-                difficulty: clue.difficulty,
-            };
-
-            Storage::save_clue(&env, hunt_id, &cloned_clue);
-            hunt.total_clues += 1;
-            if cloned_clue.is_required {
-                hunt.required_clues += 1;
-            }
-
-            let event = ClueAddedEvent {
-                hunt_id,
-                clue_id: cloned_clue.clue_id,
-                creator: creator.clone(),
-                question: cloned_clue.question.clone(),
-                points: cloned_clue.points,
-                is_required: cloned_clue.is_required,
-                difficulty: cloned_clue.difficulty,
-            };
-            env.events()
-                .publish((Symbol::new(&env, "ClueAdded"), hunt_id, cloned_clue.clue_id), event);
-        }
-
-        Storage::save_hunt(&env, &hunt);
-        Ok(hunt_id)
     }
 
     pub fn set_time_bonus_config(

@@ -346,6 +346,15 @@ pub struct RewardClaimedEvent {
     pub nft_awarded: bool,
 }
 
+/// Emitted when a hunt is cloned.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HuntClonedEvent {
+    pub original_hunt_id: u64,
+    pub new_hunt_id: u64,
+    pub creator: Address,
+}
+
 /// Emitted when a clue is added. Does not expose the answer hash.
 #[contracttype]
 #[derive(Clone, Debug)]
