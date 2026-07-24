@@ -198,15 +198,72 @@ impl HuntyCore {
     /// The template hunt must already be completed. The copied hunt starts as a fresh
     /// draft with a new hunt ID, creator, title, and description, but reuses the
     /// template's clue questions, hashes, points, and required flags.
-    pub fn create_hunt_from_template(
+    /// Clones an existing hunt into a new draft.
+    /// The caller must be the original hunt creator.
+    /// All clues are duplicated with new clue IDs.
+    /// Returns the new hunt ID.
+    pub fn clone_hunt(
         env: Env,
         template_hunt_id: u64,
-        creator: Address,
-        title: String,
-        description: String,
-        start_time: Option<u64>,
-        end_time: Option<u64>,
+        caller: Address,
     ) -> Result<u64, HuntErrorCode> {
+        // Ensure caller is authenticated
+        caller.require_auth();
+        // Load template hunt
+        let template_hunt = Storage::get_hunt(&env, template_hunt_id)
+            .ok_or(HuntErrorCode::HuntNotFound)?;
+        // Only original creator can clone
+        if caller != template_hunt.creator {
+            return Err(HuntErrorCode::Unauthorized);
+        }
+        // Create a new hunt using the template's configuration
+        let hunt_id = Self::create_hunt(
+            env.clone(),
+            caller.clone(),
+            template_hunt.title.clone(),
+            template_hunt.description.clone(),
+            None,
+            None,
+            template_hunt.max_submissions_per_minute,
+            Some(template_hunt.start_multiplier_bps),
+        )?;
+        // Retrieve the newly created hunt to update counters
+        let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+        // Clone each clue from the template
+        let template_clues = Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
+        for i in 0..template_clues.len() {
+            let clue = template_clues.get(i).unwrap();
+            let cloned_clue = Clue {
+                clue_id: Storage::next_clue_id(&env, hunt_id),
+                question: clue.question.clone(),
+                answer_hashes: clue.answer_hashes.clone(),
+                points: clue.points,
+                is_required: clue.is_required,
+                difficulty: clue.difficulty,
+            };
+            Storage::save_clue(&env, hunt_id, &cloned_clue);
+            hunt.total_clues += 1;
+            if cloned_clue.is_required {
+                hunt.required_clues += 1;
+            }
+            // Emit clue added event for the cloned hunt
+            let event = ClueAddedEvent {
+                hunt_id,
+                clue_id: cloned_clue.clue_id,
+                creator: caller.clone(),
+                question: cloned_clue.question.clone(),
+                points: cloned_clue.points,
+                is_required: cloned_clue.is_required,
+                difficulty: cloned_clue.difficulty,
+            };
+            env.events()
+                .publish((Symbol::new(&env, "ClueAdded"), hunt_id, cloned_clue.clue_id), event);
+        }
+        // Persist the updated hunt metadata
+        Storage::save_hunt(&env, &hunt);
+        Ok(hunt_id)
+    }
+
         let template_hunt =
             Storage::get_hunt(&env, template_hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
 
@@ -262,13 +319,11 @@ impl HuntyCore {
         Ok(hunt_id)
     }
 
-    /// Sets an optional time-based scoring bonus for a draft hunt.
-    /// The bonus is applied to each clue score as it is completed.
     pub fn set_time_bonus_config(
         env: Env,
         hunt_id: u64,
         caller: Address,
-        time_bonus_config: Option<TimeBonusConfig>,
+        _bonus_config: Option<TimeBonusConfig>,
     ) -> Result<(), HuntErrorCode> {
         caller.require_auth();
 
