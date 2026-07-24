@@ -2,7 +2,7 @@
 mod test {
     use crate::errors::RewardErrorCode;
     use crate::storage::Storage;
-    use crate::types::RewardConfig;
+    use crate::types::{BatchDistributionEntry, RewardConfig};
     use crate::RewardManager;
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{symbol_short, token, Address, Env, IntoVal, Symbol, Val};
@@ -2163,6 +2163,320 @@ fn test_distribute_rewards_failed_nft_creates_pending_entry() {
             );
             assert!(result.is_ok());
             assert!(!Storage::is_authorized_contract(&env, &authorized));
+        });
+    }
+
+    // ========== distribute_batch ==========
+
+    /// Helper to create a BatchDistributionEntry with XLM-only config.
+    fn batch_entry(env: &Env, hunt_id: u64, player: Address, xlm_amount: i128) -> BatchDistributionEntry {
+        BatchDistributionEntry {
+            hunt_id,
+            player_address: player,
+            reward_config: xlm_only_config(env, xlm_amount),
+        }
+    }
+
+    #[test]
+    fn test_distribute_batch_success_two_entries() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 200_000_000).unwrap();
+
+            let entries = Vec::from_array(&env, [
+                batch_entry(&env, 1, player1.clone(), 50_000_000),
+                batch_entry(&env, 1, player2.clone(), 60_000_000),
+            ]);
+
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert!(result.is_ok());
+        });
+
+        // Both players received their XLM
+        assert_eq!(get_balance(&env, &token_address, &player1), 50_000_000);
+        assert_eq!(get_balance(&env, &token_address, &player2), 60_000_000);
+
+        // Contract balance decreased correctly
+        assert_eq!(get_balance(&env, &token_address, &contract_id), 90_000_000);
+
+        // Pool balance tracked
+        env.as_contract(&contract_id, || {
+            assert_eq!(RewardManager::get_pool_balance(env.clone(), 1), 90_000_000);
+            assert!(RewardManager::is_reward_distributed(env.clone(), 1, player1.clone()));
+            assert!(RewardManager::is_reward_distributed(env.clone(), 1, player2.clone()));
+        });
+    }
+
+    #[test]
+    fn test_distribute_batch_empty_fails() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, _) = setup(&env);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            let entries: Vec<BatchDistributionEntry> = Vec::new(&env);
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert_eq!(result, Err(RewardErrorCode::InvalidConfig));
+        });
+    }
+
+    #[test]
+    fn test_distribute_batch_too_large_fails() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, _) = setup(&env);
+        let player = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            // Build 11 entries (MAX_BATCH_SIZE is 10)
+            let mut entries = Vec::new(&env);
+            for _i in 0..11u32 {
+                entries.push_back(batch_entry(&env, 1, player.clone(), 10_000_000));
+            }
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert_eq!(result, Err(RewardErrorCode::BatchTooLarge));
+        });
+    }
+
+    #[test]
+    fn test_distribute_batch_insufficient_pool_atomic_rollback() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        // Only 100 XLM in pool; player2 asks for more than available
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 100_000_000).unwrap();
+
+            let entries = Vec::from_array(&env, [
+                batch_entry(&env, 1, player1.clone(), 60_000_000),
+                batch_entry(&env, 1, player2.clone(), 60_000_000), // 120 > 100 total
+            ]);
+
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert_eq!(result, Err(RewardErrorCode::InsufficientPool));
+        });
+
+        // Atomic: neither player received tokens
+        assert_eq!(get_balance(&env, &token_address, &player1), 0);
+        assert_eq!(get_balance(&env, &token_address, &player2), 0);
+
+        // Pool balance unchanged
+        env.as_contract(&contract_id, || {
+            assert_eq!(RewardManager::get_pool_balance(env.clone(), 1), 100_000_000);
+        });
+    }
+
+    #[test]
+    fn test_distribute_batch_already_distributed_entry_fails() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 200_000_000).unwrap();
+
+            // Distribute to player1 individually first
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player1.clone(),
+                xlm_only_config(&env, 10_000_000),
+            )
+            .unwrap();
+
+            // Now batch: player1 is already distributed -> should fail
+            let entries = Vec::from_array(&env, [
+                batch_entry(&env, 1, player1.clone(), 10_000_000),
+                batch_entry(&env, 1, player2.clone(), 50_000_000),
+            ]);
+
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert_eq!(result, Err(RewardErrorCode::AlreadyDistributed));
+        });
+
+        // Player2 should NOT have received their reward (batch is atomic)
+        assert_eq!(get_balance(&env, &token_address, &player2), 0);
+    }
+
+    #[test]
+    fn test_distribute_batch_across_different_hunts() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+
+            // Two separate pools
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 100_000_000).unwrap();
+
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 2, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 2, 100_000_000).unwrap();
+
+            let entries = Vec::from_array(&env, [
+                batch_entry(&env, 1, player1.clone(), 50_000_000),
+                batch_entry(&env, 2, player2.clone(), 60_000_000),
+            ]);
+
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert!(result.is_ok());
+
+            // Each pool's balance decreased independently
+            assert_eq!(RewardManager::get_pool_balance(env.clone(), 1), 50_000_000);
+            assert_eq!(RewardManager::get_pool_balance(env.clone(), 2), 40_000_000);
+        });
+
+        assert_eq!(get_balance(&env, &token_address, &player1), 50_000_000);
+        assert_eq!(get_balance(&env, &token_address, &player2), 60_000_000);
+    }
+
+    #[test]
+    fn test_distribute_batch_pool_not_found() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            // Only create pool 1, not pool 2
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 100_000_000).unwrap();
+
+            let entries = Vec::from_array(&env, [
+                batch_entry(&env, 1, player1.clone(), 50_000_000),
+                batch_entry(&env, 2, player2.clone(), 50_000_000), // pool 2 doesn't exist
+            ]);
+
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert_eq!(result, Err(RewardErrorCode::PoolNotFound));
+        });
+
+        // Atomic: player1 didn't get anything
+        assert_eq!(get_balance(&env, &token_address, &player1), 0);
+    }
+
+    #[test]
+    fn test_distribute_batch_below_minimum() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            // Pool has minimum of 20_000_000
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 20_000_000).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 200_000_000).unwrap();
+
+            let entries = Vec::from_array(&env, [
+                batch_entry(&env, 1, player1.clone(), 50_000_000),
+                batch_entry(&env, 1, player2.clone(), 5_000_000), // below minimum!
+            ]);
+
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert_eq!(result, Err(RewardErrorCode::BelowMinimumAmount));
+        });
+
+        // Atomic: no distributions
+        assert_eq!(get_balance(&env, &token_address, &player1), 0);
+        assert_eq!(get_balance(&env, &token_address, &player2), 0);
+    }
+
+    #[test]
+    fn test_distribute_batch_events_emitted() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 200_000_000).unwrap();
+
+            let entries = Vec::from_array(&env, [
+                batch_entry(&env, 1, player1.clone(), 50_000_000),
+                batch_entry(&env, 1, player2.clone(), 60_000_000),
+            ]);
+
+            RewardManager::distribute_batch(env.clone(), entries).unwrap();
+
+            // Two RWD_DIST events should have been emitted
+            let events = env.events().all();
+            let mut rwd_count = 0u32;
+            let mut idx = 0u32;
+            while idx < events.len() {
+                let topics = events.get(idx).unwrap().1;
+                if topics.len() > 0
+                    && topics.get(0).unwrap() == symbol_short!("RWD_DIST").into_val(&env)
+                {
+                    rwd_count += 1;
+                }
+                idx += 1;
+            }
+            assert_eq!(rwd_count, 2, "expected 2 RWD_DIST events, found {}", rwd_count);
+        });
+    }
+
+    #[test]
+    fn test_distribute_batch_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, _, _) = setup(&env);
+        let player = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            let entries = Vec::from_array(&env, [
+                batch_entry(&env, 1, player.clone(), 50_000_000),
+            ]);
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert_eq!(result, Err(RewardErrorCode::NotInitialized));
         });
     }
 }

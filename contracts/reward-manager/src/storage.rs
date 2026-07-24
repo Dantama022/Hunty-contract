@@ -1,6 +1,8 @@
 use soroban_sdk::{symbol_short, Address, Env};
 
-use crate::types::{DistributionRecord, RewardPoolConfig, PoolAuditEntry, PoolOperation};
+use crate::types::{
+    DistributionRecord, PoolAuditEntry, PoolOperation, ResolutionStatus, RewardPoolConfig,
+};
 pub struct Storage;
 
 impl Storage {
@@ -26,6 +28,12 @@ impl Storage {
     const TOTAL_XLM_DST_KEY: soroban_sdk::Symbol = symbol_short!("TXDST");
     const IN_DISTRIBUTION_KEY: soroban_sdk::Symbol = symbol_short!("IN_DIST");
     const HAS_AUTH_KEY: soroban_sdk::Symbol = symbol_short!("HAUTH");
+    const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ACNT");
+    const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("ALOG");
+    const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 1000;
+    const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUS");
+    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
+    const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("ELOG");
 
     // ========== Admin ==========
 

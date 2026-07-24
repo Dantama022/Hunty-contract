@@ -60,4 +60,10 @@ pub enum RewardErrorCode {
 
     /// No pending failed NFT mint found for retry.
     NftMintPendingNotFound = 23,
+
+    /// Batch distribution size exceeds the maximum allowed.
+    BatchTooLarge = 24,
+
+    /// No distribution record exists for the given hunt/player pair.
+    DistributionNotFound = 25,
 }

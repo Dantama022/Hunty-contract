@@ -137,3 +137,28 @@ pub struct PoolAuditEntry {
     /// The XLM amount involved, if applicable.
     pub amount: Option<i128>,
 }
+
+/// Resolution outcome for a failed distribution, set by the admin.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    /// Distribution was manually confirmed as completed.
+    Completed,
+    /// Distribution was refunded to the pool.
+    Refunded,
+}
+
+/// A single entry in a batch distribution request.
+///
+/// Each entry describes one (hunt, player, reward) tuple to be processed
+/// atomically alongside all other entries in the same `distribute_batch` call.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BatchDistributionEntry {
+    /// The hunt the player completed.
+    pub hunt_id: u64,
+    /// The player receiving the reward.
+    pub player_address: Address,
+    /// Reward configuration (XLM and/or NFT details).
+    pub reward_config: RewardConfig,
+}
