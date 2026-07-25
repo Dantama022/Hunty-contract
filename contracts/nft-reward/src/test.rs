@@ -613,3 +613,90 @@ fn test_unlimited_supply_allows_many_mints() {
     assert_eq!(client.total_supply(), 10);
     assert_eq!(client.get_remaining_supply(), None); // still unlimited
 }
+
+// =========================================================================
+// SET_MAX_SUPPLY ADMIN TESTS
+// =========================================================================
+
+/// Admin can raise the cap after deployment.
+#[test]
+fn test_set_max_supply_raises_cap() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, Some(2));
+    let admin = client.get_admin().unwrap();
+
+    assert_eq!(client.get_max_supply(), Some(2));
+
+    client.set_max_supply(&admin, &Some(10));
+    assert_eq!(client.get_max_supply(), Some(10));
+    assert_eq!(client.get_remaining_supply(), Some(10));
+
+    // Minting still works after raising the cap
+    let player = Address::generate(&env);
+    let meta = create_metadata(&env, "NFT", "Desc", "ipfs://n");
+    client.mint_reward_nft(&minter, &1, &player, &meta);
+    assert_eq!(client.get_remaining_supply(), Some(9));
+}
+
+/// Admin can remove the cap entirely (set to None → unlimited).
+#[test]
+fn test_set_max_supply_removes_cap() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, Some(1));
+    let admin = client.get_admin().unwrap();
+
+    // Exhaust the cap
+    let player = Address::generate(&env);
+    let meta = create_metadata(&env, "NFT", "Desc", "ipfs://n");
+    client.mint_reward_nft(&minter, &1, &player, &meta);
+    assert_eq!(client.get_remaining_supply(), Some(0));
+
+    // Admin removes the cap
+    client.set_max_supply(&admin, &None);
+    assert_eq!(client.get_max_supply(), None);
+    assert_eq!(client.get_remaining_supply(), None);
+
+    // Minting is now allowed again
+    client.mint_reward_nft(&minter, &2, &player, &meta);
+    assert_eq!(client.total_supply(), 2);
+}
+
+/// Admin can set cap to 0 (treated as unlimited).
+#[test]
+fn test_set_max_supply_zero_is_unlimited() {
+    let env = setup_env();
+    let (client, _minter) = setup_nft_reward(&env, Some(5));
+    let admin = client.get_admin().unwrap();
+
+    client.set_max_supply(&admin, &Some(0));
+    assert_eq!(client.get_remaining_supply(), None); // unlimited
+}
+
+/// Setting cap below already-minted count is rejected.
+#[test]
+#[should_panic]
+fn test_set_max_supply_below_minted_is_rejected() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+    let admin = client.get_admin().unwrap();
+
+    let player = Address::generate(&env);
+    let meta = create_metadata(&env, "NFT", "Desc", "ipfs://n");
+    client.mint_reward_nft(&minter, &1, &player, &meta);
+    client.mint_reward_nft(&minter, &2, &player, &meta);
+    client.mint_reward_nft(&minter, &3, &player, &meta);
+
+    // 3 already minted — cap of 2 should be rejected
+    client.set_max_supply(&admin, &Some(2));
+}
+
+/// Non-admin cannot change the cap.
+#[test]
+#[should_panic]
+fn test_set_max_supply_non_admin_rejected() {
+    let env = setup_env();
+    let (client, _minter) = setup_nft_reward(&env, Some(10));
+    let attacker = Address::generate(&env);
+
+    client.set_max_supply(&attacker, &Some(1));
+}

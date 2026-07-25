@@ -210,6 +210,7 @@ impl NftReward {
         Storage::save_admin(&env, &admin);
         Storage::add_minter(&env, &minter);
         Storage::set_max_supply(&env, max_supply);
+        Storage::mark_initialized(&env);
         Storage::set_contract_version(&env, CONTRACT_VERSION);
         Ok(())
     }
@@ -793,6 +794,37 @@ impl NftReward {
     /// - `Some(n)` → at most `n` NFTs may ever be minted
     pub fn get_max_supply(env: Env) -> Option<u64> {
         Storage::get_max_supply(&env)
+    }
+
+    /// Updates the maximum total supply cap. Admin only.
+    ///
+    /// - Pass `None` or `Some(0)` to remove the cap (unlimited).
+    /// - Pass `Some(n)` where `n >= current total_supply` to set a new cap.
+    ///   Attempting to set a cap lower than the already-minted count is
+    ///   rejected with `Unauthorized` to prevent bricking the contract.
+    ///
+    /// # Errors
+    /// * `NotInitialized` - Contract has not been initialized yet
+    /// * `Unauthorized`   - Caller is not the admin, or new cap < minted supply
+    pub fn set_max_supply(
+        env: Env,
+        admin: Address,
+        new_max: Option<u64>,
+    ) -> Result<(), crate::errors::NftErrorCode> {
+        Self::require_admin(&env, &admin)?;
+
+        // Guard: never allow setting a cap below what's already minted.
+        if let Some(cap) = new_max {
+            if cap > 0 {
+                let minted = Storage::get_nft_counter(&env);
+                if cap < minted {
+                    return Err(crate::errors::NftErrorCode::Unauthorized);
+                }
+            }
+        }
+
+        Storage::set_max_supply(&env, new_max);
+        Ok(())
     }
 
     /// Returns the number of NFTs that can still be minted.
