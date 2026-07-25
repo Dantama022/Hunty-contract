@@ -821,7 +821,7 @@ impl RewardManager {
         let pool_distribution = crate::types::PoolDistribution {
             player: player_address.clone(),
             xlm_amount,
-            nft_id: nft_id.unwrap_or(0),
+            nft_id,
         };
         Storage::add_pool_distribution(&env, hunt_id, pool_distribution);
 

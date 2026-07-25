@@ -51,7 +51,7 @@ pub struct DistributionRecord {
 pub struct PoolDistribution {
     pub player: Address,
     pub xlm_amount: i128,
-    pub nft_id: u64,
+    pub nft_id: Option<u64>,
 }
 
 /// Configuration for a reward pool, set at creation time.
