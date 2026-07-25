@@ -1074,8 +1074,8 @@ mod test {
                 None,
             )
             .unwrap();
-            let hunt1 = Storage::get_hunt(env, hunt_id1).unwrap();
-            let hunt2 = Storage::get_hunt(env, hunt_id2).unwrap();
+            let hunt1 = Storage::get_hunt(env.clone(), hunt_id1).unwrap();
+            let hunt2 = Storage::get_hunt(env.clone(), hunt_id2).unwrap();
             (hunt_id1, hunt_id2, hunt1, hunt2)
         });
 
@@ -5989,18 +5989,19 @@ fn test_get_hunt_statistics_mixed_completion_states() {
             created_at: 0,
             activated_at: 0,
             end_time: 0,
-            reward_config: crate::types::RewardConfig::new(0, false, None, 0),
+            reward_config: crate::types::HuntRewardConfig::new(&env, 0, false, None, 0, 0, 0),
             total_clues: 0,
             required_clues: 0,
             completed_count: 0,
             max_submissions_per_minute: 0,
+            max_attempts_per_clue: 5,
             start_multiplier_bps: 20000,
         };
 
         let clue = Clue {
             clue_id: 1,
             question: soroban_sdk::String::from_str(&env, "Q"),
-            answer_hash: soroban_sdk::BytesN::from_array(&env, &[0u8; 32]),
+            answer_hashes: soroban_sdk::Vec::new(&env),
             points: 10,
             is_required: true,
             difficulty: 1,
@@ -6234,7 +6235,7 @@ fn test_get_hunt_statistics_mixed_completion_states() {
         // Configure reward config
         as_core_contract(&env, &core_id, |env| {
             let mut hunt = Storage::get_hunt(env, hunt_id).unwrap();
-            hunt.reward_config = crate::types::RewardConfig::new(6000, false, None, 2);
+            hunt.reward_config = crate::types::HuntRewardConfig::new(env, 6000, false, None, 2, 0, 0);
             Storage::save_hunt(env, &hunt);
         });
 
@@ -6339,7 +6340,7 @@ fn test_get_hunt_statistics_mixed_completion_states() {
 
         as_core_contract(&env, &core_id, |env| {
             let mut hunt = Storage::get_hunt(env, hunt_id).unwrap();
-            hunt.reward_config = crate::types::RewardConfig::new(0, true, Some(nft_contract_id.clone()), 1);
+            hunt.reward_config = crate::types::HuntRewardConfig::new(env, 0, true, Some(nft_contract_id.clone()), 1, 0, 0);
             Storage::save_hunt(env, &hunt);
         });
 
@@ -6423,7 +6424,7 @@ fn test_get_hunt_statistics_mixed_completion_states() {
 
         as_core_contract(&env, &core_id, |env| {
             let mut hunt = Storage::get_hunt(env, hunt_id).unwrap();
-            hunt.reward_config = crate::types::RewardConfig::new(8000, true, Some(nft_contract_id.clone()), 2);
+            hunt.reward_config = crate::types::HuntRewardConfig::new(env, 8000, true, Some(nft_contract_id.clone()), 2, 0, 0);
             Storage::save_hunt(env, &hunt);
         });
 
@@ -6913,7 +6914,7 @@ fn test_get_hunt_statistics_mixed_completion_states() {
             
             // Set up reward config with max 3 winners
             let mut hunt = Storage::get_hunt(env, id).unwrap();
-            hunt.reward_config = crate::types::RewardConfig::new(0, false, None, 3);
+            hunt.reward_config = crate::types::HuntRewardConfig::new(env, 0, false, None, 3, 0, 0);
             Storage::save_hunt(env, &hunt);
             id
         });
