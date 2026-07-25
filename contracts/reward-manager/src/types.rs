@@ -1,8 +1,7 @@
 use soroban_sdk::{contracttype, Address, Vec};
 
 pub use reward_interface::{
-    resolve_tier_amount, tiers_are_strictly_ascending, RewardConfig, TierError,
-    TimeBasedRewardTier,
+    resolve_tier_amount, tiers_are_strictly_ascending, RewardConfig, TierError, TimeBasedRewardTier,
 };
 
 /// Semantic versioning struct.

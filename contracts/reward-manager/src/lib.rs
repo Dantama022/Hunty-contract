@@ -8,8 +8,8 @@ use crate::nft_handler::NftHandler;
 use crate::storage::Storage;
 pub use crate::types::{
     resolve_tier_amount, tiers_are_strictly_ascending, DistributionRecord, DistributionStatus,
-    PoolDistribution, RewardConfig, RewardPoolConfig, RewardPoolStatus, ResolutionStatus,
-    SemVer, TierError, TimeBasedRewardTier, ValidationResult,
+    PoolDistribution, ResolutionStatus, RewardConfig, RewardPoolConfig, RewardPoolStatus, SemVer,
+    TierError, TimeBasedRewardTier, ValidationResult,
 };
 use crate::xlm_handler::XlmHandler;
 
@@ -508,9 +508,10 @@ impl RewardManager {
 
         // Check for overflow before adding to pool balance
         let current = Storage::get_pool_balance(&env, hunt_id);
-        let new_balance = current.checked_add(amount)
+        let new_balance = current
+            .checked_add(amount)
             .ok_or(RewardErrorCode::PoolBalanceOverflow)?;
-        
+
         // Validate the new balance doesn't exceed maximum pool balance
         if new_balance > MAX_POOL_BALANCE {
             return Err(RewardErrorCode::PoolBalanceOverflow);
@@ -631,18 +632,31 @@ impl RewardManager {
         }
     }
 
-    pub fn set_daily_pool_cap(env: Env, admin: Address, hunt_id: u64, cap: i128) -> Result<(), RewardErrorCode> {
+    pub fn set_daily_pool_cap(
+        env: Env,
+        admin: Address,
+        hunt_id: u64,
+        cap: i128,
+    ) -> Result<(), RewardErrorCode> {
         admin.require_auth();
         let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if configured_admin != admin { return Err(RewardErrorCode::Unauthorized); }
+        if configured_admin != admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
         Storage::set_daily_pool_cap(&env, hunt_id, cap);
         Ok(())
     }
 
-    pub fn set_daily_global_cap(env: Env, admin: Address, cap: i128) -> Result<(), RewardErrorCode> {
+    pub fn set_daily_global_cap(
+        env: Env,
+        admin: Address,
+        cap: i128,
+    ) -> Result<(), RewardErrorCode> {
         admin.require_auth();
         let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if configured_admin != admin { return Err(RewardErrorCode::Unauthorized); }
+        if configured_admin != admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
         Storage::set_daily_global_cap(&env, cap);
         Ok(())
     }
@@ -670,12 +684,12 @@ impl RewardManager {
         // Get current distribution state before any mutations
         let distribution_record = Storage::get_distribution_record(&env, hunt_id, &player_address);
         let current_nonce = Storage::get_distribution_nonce(&env, hunt_id, &player_address);
-        
+
         // Detect replay: if record exists but nonce hasn't been incremented, it's a replay attempt
         if distribution_record.is_some() && current_nonce == 0 {
             return Err(RewardErrorCode::AlreadyDistributed);
         }
-        
+
         // Verify distribution state consistency
         let expected_nonce = if distribution_record.is_some() { 1 } else { 0 };
         if current_nonce != expected_nonce {
@@ -724,28 +738,39 @@ impl RewardManager {
             let pool_cap = Storage::get_daily_pool_cap(&env, hunt_id);
             if pool_cap > 0 {
                 let used = Storage::get_daily_pool_distributed(&env, hunt_id, day);
-                if used > pool_cap { return Err(RewardErrorCode::DailyCapExceeded); }
+                if used > pool_cap {
+                    return Err(RewardErrorCode::DailyCapExceeded);
+                }
                 if used >= (pool_cap * 8 / 10) {
-                    env.events().publish((symbol_short!("DP_WARN"),), DailyPoolCapWarningEvent { hunt_id, used, cap: pool_cap });
+                    env.events().publish(
+                        (symbol_short!("DP_WARN"),),
+                        DailyPoolCapWarningEvent {
+                            hunt_id,
+                            used,
+                            cap: pool_cap,
+                        },
+                    );
                 }
             }
 
             let global_cap = Storage::get_daily_global_cap(&env);
             if global_cap > 0 {
                 let global_used = Storage::get_daily_global_distributed(&env, day);
-                if global_used > global_cap { return Err(RewardErrorCode::GlobalDailyCapExceeded); }
+                if global_used > global_cap {
+                    return Err(RewardErrorCode::GlobalDailyCapExceeded);
+                }
                 if global_used >= (global_cap * 8 / 10) {
-                    env.events().publish((symbol_short!("DG_WARN"),), GlobalDailyCapWarningEvent { used: global_used, cap: global_cap });
+                    env.events().publish(
+                        (symbol_short!("DG_WARN"),),
+                        GlobalDailyCapWarningEvent {
+                            used: global_used,
+                            cap: global_cap,
+                        },
+                    );
                 }
             }
 
-            XlmHandler::distribute_xlm(
-                &env,
-                &xlm_token,
-                &contract_addr,
-                &player_address,
-                amount,
-            );
+            XlmHandler::distribute_xlm(&env, &xlm_token, &contract_addr, &player_address, amount);
             xlm_amount = amount;
             Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
 
@@ -842,7 +867,11 @@ impl RewardManager {
             actor: player_address.clone(),
             operation: PoolOperation::Distribute,
             timestamp: env.ledger().timestamp(),
-            amount: if xlm_amount > 0 { Some(xlm_amount) } else { None },
+            amount: if xlm_amount > 0 {
+                Some(xlm_amount)
+            } else {
+                None
+            },
         };
         Storage::append_audit_entry(&env, hunt_id, audit_entry);
 
@@ -1348,8 +1377,12 @@ impl RewardManager {
         dry_run: bool,
     ) -> Result<migration::MigrationReport, hunty_migration::UpgradeAuthError> {
         let from_version = migration::RewardManagerMigration::get_schema_version(&env);
-        let report =
-            migration::RewardManagerMigration::run_migration(&env, &admin, target_version, dry_run)?;
+        let report = migration::RewardManagerMigration::run_migration(
+            &env,
+            &admin,
+            target_version,
+            dry_run,
+        )?;
         if !dry_run && report.succeeded && report.from_version < report.to_version {
             env.events().publish(
                 migration::RewardManagerMigration::upgrade_executed_topic(&env),
@@ -1396,7 +1429,7 @@ impl RewardManager {
         // Determine start index. start_after is a cursor index, so we start at start_after + 1.
         // If None, we start at 0.
         let mut current_idx = start_after.map(|idx| idx + 1).unwrap_or(0);
-        
+
         let mut count = 0;
         while count < query_limit && current_idx < total {
             if let Some(entry) = Storage::get_pool_audit_entry(&env, hunt_id, current_idx) {
