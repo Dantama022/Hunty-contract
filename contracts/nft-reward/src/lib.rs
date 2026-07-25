@@ -419,10 +419,13 @@ impl NftReward {
         metadata.hunt_title =
             Self::sanitize_metadata_field(&env, &metadata.hunt_title, MAX_NFT_TITLE_BYTES, true);
 
+        // 0 is treated as "unlimited" — only enforce if max_supply is Some(n) with n > 0.
         if let Some(max_supply) = Storage::get_max_supply(&env) {
-            let current_supply = Storage::get_nft_counter(&env);
-            if current_supply >= max_supply {
-                panic_with_error!(&env, crate::errors::NftErrorCode::MaxSupplyReached);
+            if max_supply > 0 {
+                let current_supply = Storage::get_nft_counter(&env);
+                if current_supply >= max_supply {
+                    panic_with_error!(&env, crate::errors::NftErrorCode::MaxSupplyReached);
+                }
             }
         }
 
@@ -781,6 +784,33 @@ impl NftReward {
     /// Equivalent to total_supply() but with a dedicated function name for clarity.
     pub fn get_total_nft_count(env: Env) -> u64 {
         Storage::get_nft_counter(&env)
+    }
+
+    /// Returns the configured maximum total supply of NFTs.
+    ///
+    /// - `None`  → no cap was set (unlimited minting)
+    /// - `Some(0)` → unlimited (explicit zero treated as unlimited)
+    /// - `Some(n)` → at most `n` NFTs may ever be minted
+    pub fn get_max_supply(env: Env) -> Option<u64> {
+        Storage::get_max_supply(&env)
+    }
+
+    /// Returns the number of NFTs that can still be minted.
+    ///
+    /// - `None`  → unlimited (no cap configured, or cap was set to 0)
+    /// - `Some(n)` → exactly `n` more NFTs may be minted before the cap is hit
+    ///
+    /// Once the cap is reached this returns `Some(0)`, and any subsequent mint
+    /// will panic with `MaxSupplyReached`.
+    pub fn get_remaining_supply(env: Env) -> Option<u64> {
+        match Storage::get_max_supply(&env) {
+            None => None,
+            Some(max) if max == 0 => None, // explicit 0 ⟹ unlimited
+            Some(max) => {
+                let minted = Storage::get_nft_counter(&env);
+                Some(max.saturating_sub(minted))
+            }
+        }
     }
 
     /// Lists all NFTs minted by the contract with pagination support.

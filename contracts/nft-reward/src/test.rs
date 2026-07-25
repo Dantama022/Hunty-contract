@@ -129,9 +129,10 @@ fn mint_transferable(
 fn test_initialize_stores_admin() {
     let env = setup_env();
     let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
     let contract_id = env.register(NftReward, ());
     let client = NftRewardClient::new(&env, &contract_id);
-    client.initialize(&admin, &None);
+    client.initialize(&admin, &minter, &None);
 
     assert_eq!(client.get_admin(), Some(admin));
 }
@@ -144,10 +145,11 @@ fn test_initialize_requires_auth() {
     env.ledger().set_timestamp(1000);
 
     let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
     let contract_id = env.register(NftReward, ());
     let client = NftRewardClient::new(&env, &contract_id);
 
-    client.initialize(&admin, &None);
+    client.initialize(&admin, &minter, &None);
 }
 
 #[test]
@@ -155,10 +157,11 @@ fn test_initialize_requires_auth() {
 fn test_initialize_cannot_be_called_twice() {
     let env = setup_env();
     let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
     let contract_id = env.register(NftReward, ());
     let client = NftRewardClient::new(&env, &contract_id);
-    client.initialize(&admin, &None);
-    client.initialize(&admin, &None);
+    client.initialize(&admin, &minter, &None);
+    client.initialize(&admin, &minter, &None);
 }
 
 #[test]
@@ -453,3 +456,160 @@ fn test_update_nft_metadata_owner_only() {
     client.update_nft_metadata(
         &nft_id,
         &owner,
+        &String::from_str(&env, "New description"),
+        &String::from_str(&env, "https://cdn.example.com/new.png"),
+    );
+
+    let updated_nft = client.get_nft(&nft_id).unwrap();
+    assert_eq!(
+        updated_nft.metadata.description,
+        String::from_str(&env, "New description")
+    );
+    assert_eq!(
+        updated_nft.metadata.image_uri,
+        String::from_str(&env, "https://cdn.example.com/new.png")
+    );
+    // Title should remain unchanged (immutable)
+    assert_eq!(updated_nft.metadata.title, metadata.title);
+}
+
+// =========================================================================
+// MAX SUPPLY TESTS
+// =========================================================================
+
+/// Initializing with a non-zero cap should be reflected by get_max_supply.
+#[test]
+fn test_initialize_with_max_supply_stores_cap() {
+    let env = setup_env();
+    let (client, _minter) = setup_nft_reward(&env, Some(100));
+
+    assert_eq!(client.get_max_supply(), Some(100));
+}
+
+/// Initializing with None means unlimited — get_max_supply returns None.
+#[test]
+fn test_initialize_without_max_supply_is_unlimited() {
+    let env = setup_env();
+    let (client, _minter) = setup_nft_reward(&env, None);
+
+    assert_eq!(client.get_max_supply(), None);
+}
+
+/// Initializing with explicit 0 means unlimited — consistent with None.
+#[test]
+fn test_initialize_with_zero_max_supply_is_unlimited() {
+    let env = setup_env();
+    let (client, _minter) = setup_nft_reward(&env, Some(0));
+
+    // 0 == unlimited, remaining_supply should be None (no cap)
+    assert_eq!(client.get_remaining_supply(), None);
+}
+
+/// get_remaining_supply returns None when no cap was set.
+#[test]
+fn test_get_remaining_supply_unlimited() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    assert_eq!(client.get_remaining_supply(), None);
+
+    // Minting should not change the None result
+    let player = Address::generate(&env);
+    let meta = create_metadata(&env, "Trophy", "Desc", "ipfs://trophy");
+    client.mint_reward_nft(&minter, &1, &player, &meta);
+
+    assert_eq!(client.get_remaining_supply(), None);
+}
+
+/// get_remaining_supply decreases after each mint.
+#[test]
+fn test_get_remaining_supply_decreases_on_mint() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, Some(3));
+
+    assert_eq!(client.get_remaining_supply(), Some(3));
+
+    let player = Address::generate(&env);
+    let meta = create_metadata(&env, "Trophy", "Desc", "ipfs://t");
+
+    client.mint_reward_nft(&minter, &1, &player, &meta);
+    assert_eq!(client.get_remaining_supply(), Some(2));
+
+    client.mint_reward_nft(&minter, &2, &player, &meta);
+    assert_eq!(client.get_remaining_supply(), Some(1));
+
+    client.mint_reward_nft(&minter, &3, &player, &meta);
+    assert_eq!(client.get_remaining_supply(), Some(0));
+}
+
+/// Minting up to the cap succeeds; one more mint panics with MaxSupplyReached.
+#[test]
+#[should_panic]
+fn test_mint_beyond_max_supply_panics() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, Some(2));
+
+    let player = Address::generate(&env);
+    let meta = create_metadata(&env, "Trophy", "Desc", "ipfs://t");
+
+    // These should succeed
+    client.mint_reward_nft(&minter, &1, &player, &meta);
+    client.mint_reward_nft(&minter, &2, &player, &meta);
+
+    // This should panic — supply exhausted
+    client.mint_reward_nft(&minter, &3, &player, &meta);
+}
+
+/// Minting exactly at the cap boundary is allowed (last slot).
+#[test]
+fn test_mint_at_max_supply_boundary_succeeds() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, Some(1));
+
+    let player = Address::generate(&env);
+    let meta = create_metadata(&env, "Last NFT", "The final slot", "ipfs://last");
+
+    let nft_id = client.mint_reward_nft(&minter, &1, &player, &meta);
+    assert!(nft_id > 0);
+    assert_eq!(client.total_supply(), 1);
+    assert_eq!(client.get_remaining_supply(), Some(0));
+}
+
+/// total_supply and get_remaining_supply are consistent.
+#[test]
+fn test_total_supply_and_remaining_are_consistent() {
+    let cap: u64 = 5;
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, Some(cap));
+
+    let player = Address::generate(&env);
+    let meta = create_metadata(&env, "NFT", "Desc", "ipfs://n");
+
+    for i in 0..cap {
+        let remaining_before = client.get_remaining_supply().unwrap();
+        assert_eq!(remaining_before, cap - i);
+
+        client.mint_reward_nft(&minter, &(i + 1), &player, &meta);
+
+        let remaining_after = client.get_remaining_supply().unwrap();
+        assert_eq!(remaining_after, cap - i - 1);
+        assert_eq!(client.total_supply() + remaining_after, cap);
+    }
+}
+
+/// With no cap, minting large batches works without hitting a supply limit.
+#[test]
+fn test_unlimited_supply_allows_many_mints() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let meta = create_metadata(&env, "NFT", "Desc", "ipfs://n");
+
+    for i in 0..10u64 {
+        client.mint_reward_nft(&minter, &(i + 1), &player, &meta);
+    }
+
+    assert_eq!(client.total_supply(), 10);
+    assert_eq!(client.get_remaining_supply(), None); // still unlimited
+}
