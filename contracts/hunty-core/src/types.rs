@@ -176,6 +176,8 @@ pub struct Location {
     pub radius: u32,
 }
 
+
+/// Internal compact storage representation of player progress.
 /// Internal storage representation of player progress.
 /// Does not store `player` or `hunt_id` — those are already the storage key.
 ///

@@ -467,6 +467,14 @@ impl Storage {
         // Store the progress with composite key (hunt_id + player address),
         // in compact form (key fields player/hunt_id are not duplicated).
         let key = Self::progress_key(progress.hunt_id, &progress.player);
+        let activated_at = Self::get_hunt(env, progress.hunt_id)
+            .map(|h| h.activated_at)
+            .unwrap_or(0);
+        env.storage().persistent().set(&key, &progress.to_stored(activated_at));
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+        env.storage().persistent().set(&key, progress);
         env.storage().persistent().set(&key, &progress.to_stored());
         let policy = if progress.is_completed || progress.reward_claimed {
             TtlPolicy::Short
