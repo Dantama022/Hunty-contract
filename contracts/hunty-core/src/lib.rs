@@ -1,6 +1,6 @@
 #![no_std]
 use crate::errors::{HuntError, HuntErrorCode};
-use crate::storage::Storage;
+use crate::storage::{HuntCache, Storage};
 use crate::types::{
     AnswerIncorrectEvent, Clue, ClueAddedEvent, ClueAliasesAddedEvent, ClueCompletedEvent,
     ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt, HuntActivatedEvent,
@@ -36,6 +36,8 @@ const DEFAULT_PAGE_SIZE: u32 = 20;
 const ANSWER_SUBMISSION_WINDOW_SECS: u64 = 300;
 /// Small forward-skew allowance so near-simultaneous signing and inclusion does not fail.
 const ANSWER_SUBMISSION_FUTURE_SKEW_SECS: u64 = 30;
+/// Maximum number of members allowed in a team.
+const MAX_TEAM_SIZE: u32 = 10;
 
 #[contract]
 pub struct HuntyCore;
@@ -177,6 +179,9 @@ impl HuntyCore {
             max_submissions_per_minute,
             max_attempts_per_clue: 5,
             start_multiplier_bps: start_multiplier_bps.unwrap_or(20000),
+            registration_deadline: 0,
+            allow_partial_scoring: false,
+            team_mode: false,
         };
 
         // Store the hunt
@@ -1563,8 +1568,9 @@ impl HuntyCore {
         // Cache read: cheaper than loading full Hunt from persistent storage
         let _cache = Self::validate_hunt_active_cached(&env, hunt_id)?;
 
-        if Storage::get_player_progress(&env, hunt_id, &player).is_some() {
-            return Err(HuntErrorCode::DuplicateRegistration);
+        // Enforce the registration deadline if the creator configured one
+        if hunt.registration_deadline != 0 && current_time >= hunt.registration_deadline {
+            return Err(HuntErrorCode::RegistrationClosed);
         }
 
         if Storage::get_player_progress(&env, hunt_id, &player).is_some() {
@@ -1738,6 +1744,11 @@ impl HuntyCore {
             return Err(HuntErrorCode::ClueAlreadyCompleted);
         }
 
+        // In team mode, a clue solved by any teammate counts as completed for the team
+        if Self::team_has_completed_clue(&env, &hunt, &player, clue_id) {
+            return Err(HuntErrorCode::ClueAlreadyCompleted);
+        }
+
         if hunt.max_submissions_per_minute > 0 {
             let mut updated_submissions = Vec::new(&env);
             for i in 0..progress.recent_submissions.len() {
@@ -1786,6 +1797,7 @@ impl HuntyCore {
 
         let score = Self::calculate_score(&hunt, &clue, progress.started_at, current_time);
         progress.complete_clue(&env, clue_id, score)?;
+        Self::record_team_clue_completion(&env, &hunt, &player, clue_id, score);
 
         if hunt.max_submissions_per_minute > 0 {
             progress.recent_submissions = Vec::new(&env);
@@ -1805,6 +1817,7 @@ impl HuntyCore {
             hunt_mut.completed_count += 1;
             let rank = hunt_mut.completed_count;
             Storage::save_hunt(&env, &hunt_mut);
+            Storage::increment_player_completed_hunt_count(&env, &player);
             let hunt_completed_event = HuntCompletedEvent {
                 hunt_id,
                 player: player.clone(),
@@ -1899,6 +1912,11 @@ impl HuntyCore {
             return Err(HuntErrorCode::ClueAlreadyCompleted);
         }
 
+        // In team mode, a clue solved by any teammate counts as completed for the team
+        if Self::team_has_completed_clue(&env, &hunt, &player, clue_id) {
+            return Err(HuntErrorCode::ClueAlreadyCompleted);
+        }
+
         if hunt.max_submissions_per_minute > 0 {
             let mut updated_submissions = Vec::new(&env);
             for i in 0..progress.recent_submissions.len() {
@@ -1943,6 +1961,7 @@ impl HuntyCore {
 
         let score = Self::calculate_score(&hunt, &clue, progress.started_at, current_time);
         progress.complete_clue(&env, clue_id, score)?;
+        Self::record_team_clue_completion(&env, &hunt, &player, clue_id, score);
 
         if hunt.max_submissions_per_minute > 0 {
             progress.recent_submissions = Vec::new(&env);
@@ -1960,6 +1979,7 @@ impl HuntyCore {
             hunt_mut.completed_count += 1;
             let rank = hunt_mut.completed_count;
             Storage::save_hunt(&env, &hunt_mut);
+            Storage::increment_player_completed_hunt_count(&env, &player);
             let hunt_completed_event = HuntCompletedEvent {
                 hunt_id,
                 player: player.clone(),
