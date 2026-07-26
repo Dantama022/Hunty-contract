@@ -1067,4 +1067,342 @@ fn test_mint_reward_nft_from_map_with_invalid_types_uses_defaults() {
     assert_eq!(nft.metadata.tier, 0u32); // default due to invalid type
     assert_eq!(nft.transferable, false); // default due to invalid type
 }
-        &owner,
+
+// =========================================================================
+// METADATA SEARCH TESTS
+// =========================================================================
+
+#[test]
+fn test_search_nfts_by_title() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player1 = Address::generate(&env);
+    let player2 = Address::generate(&env);
+
+    let metadata1 = create_metadata(&env, "Dragon Slayer", "Epic dragon hunt", "ipfs://dragon");
+    let metadata2 = create_metadata(&env, "Treasure Hunter", "Gold hunt", "ipfs://treasure");
+    let metadata3 = create_metadata(&env, "Dragon Slayer", "Another dragon", "ipfs://dragon2");
+
+    client.mint_reward_nft(&minter, &1, &player1, &metadata1);
+    client.mint_reward_nft(&minter, &2, &player2, &metadata2);
+    client.mint_reward_nft(&minter, &3, &player1, &metadata3);
+
+    // Search for "Dragon Slayer"
+    let results = client.search_nfts_by_metadata(
+        &0,
+        &10,
+        &Some(String::from_str(&env, "Dragon Slayer")),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    assert_eq!(results.len(), 2);
+}
+
+#[test]
+fn test_search_nfts_by_rarity() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+
+    let metadata1 = create_metadata_full(&env, "Common NFT", "desc", "ipfs://1", "Hunt1", 1, 0);
+    let metadata2 = create_metadata_full(&env, "Rare NFT", "desc", "ipfs://2", "Hunt2", 3, 0);
+    let metadata3 = create_metadata_full(&env, "Legendary NFT", "desc", "ipfs://3", "Hunt3", 5, 0);
+
+    client.mint_reward_nft(&minter, &1, &player, &metadata1);
+    client.mint_reward_nft(&minter, &2, &player, &metadata2);
+    client.mint_reward_nft(&minter, &3, &player, &metadata3);
+
+    // Search for rarity 3 (Rare)
+    let results = client.search_nfts_by_metadata(
+        &0,
+        &10,
+        &None,
+        &None,
+        &Some(3u32),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results.get(0).unwrap().metadata.rarity, 3);
+}
+
+#[test]
+fn test_search_nfts_by_hunt_id() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+
+    let metadata = create_metadata(&env, "Test NFT", "desc", "ipfs://test");
+
+    client.mint_reward_nft(&minter, &100, &player, &metadata);
+    client.mint_reward_nft(&minter, &200, &player, &metadata);
+    client.mint_reward_nft(&minter, &100, &player, &metadata);
+
+    // Search for hunt_id 100
+    let results = client.search_nfts_by_metadata(
+        &0,
+        &10,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(100u64),
+        &None,
+        &None,
+    );
+
+    assert_eq!(results.len(), 2);
+    for nft in results.iter() {
+        assert_eq!(nft.hunt_id, 100);
+    }
+}
+
+#[test]
+fn test_search_nfts_by_creator() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let creator1 = Address::generate(&env);
+    let creator2 = Address::generate(&env);
+
+    let mut metadata1 = create_metadata(&env, "NFT 1", "desc", "ipfs://1");
+    metadata1.creator = Some(creator1.clone());
+
+    let mut metadata2 = create_metadata(&env, "NFT 2", "desc", "ipfs://2");
+    metadata2.creator = Some(creator2.clone());
+
+    let mut metadata3 = create_metadata(&env, "NFT 3", "desc", "ipfs://3");
+    metadata3.creator = Some(creator1.clone());
+
+    client.mint_reward_nft(&minter, &1, &player, &metadata1);
+    client.mint_reward_nft(&minter, &2, &player, &metadata2);
+    client.mint_reward_nft(&minter, &3, &player, &metadata3);
+
+    // Search for creator1
+    let results = client.search_nfts_by_metadata(
+        &0,
+        &10,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(creator1),
+        &None,
+        &None,
+        &None,
+    );
+
+    assert_eq!(results.len(), 2);
+}
+
+#[test]
+fn test_search_nfts_by_extension_key() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+
+    let mut extensions1 = Map::new(&env);
+    extensions1.set(String::from_str(&env, "season"), String::from_str(&env, "2024"));
+
+    let mut extensions2 = Map::new(&env);
+    extensions2.set(String::from_str(&env, "event"), String::from_str(&env, "special"));
+
+    let mut extensions3 = Map::new(&env);
+    extensions3.set(String::from_str(&env, "season"), String::from_str(&env, "2023"));
+
+    let metadata1 = create_metadata_with_extensions(&env, "NFT 1", "desc", "ipfs://1", extensions1);
+    let metadata2 = create_metadata_with_extensions(&env, "NFT 2", "desc", "ipfs://2", extensions2);
+    let metadata3 = create_metadata_with_extensions(&env, "NFT 3", "desc", "ipfs://3", extensions3);
+
+    client.mint_reward_nft(&minter, &1, &player, &metadata1);
+    client.mint_reward_nft(&minter, &2, &player, &metadata2);
+    client.mint_reward_nft(&minter, &3, &player, &metadata3);
+
+    // Search for NFTs with "season" extension key
+    let results = client.search_nfts_by_metadata(
+        &0,
+        &10,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(String::from_str(&env, "season")),
+        &None,
+    );
+
+    assert_eq!(results.len(), 2);
+}
+
+#[test]
+fn test_search_nfts_by_extension_key_value() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+
+    let mut extensions1 = Map::new(&env);
+    extensions1.set(String::from_str(&env, "season"), String::from_str(&env, "2024"));
+
+    let mut extensions2 = Map::new(&env);
+    extensions2.set(String::from_str(&env, "season"), String::from_str(&env, "2023"));
+
+    let mut extensions3 = Map::new(&env);
+    extensions3.set(String::from_str(&env, "event"), String::from_str(&env, "special"));
+
+    let metadata1 = create_metadata_with_extensions(&env, "NFT 1", "desc", "ipfs://1", extensions1);
+    let metadata2 = create_metadata_with_extensions(&env, "NFT 2", "desc", "ipfs://2", extensions2);
+    let metadata3 = create_metadata_with_extensions(&env, "NFT 3", "desc", "ipfs://3", extensions3);
+
+    client.mint_reward_nft(&minter, &1, &player, &metadata1);
+    client.mint_reward_nft(&minter, &2, &player, &metadata2);
+    client.mint_reward_nft(&minter, &3, &player, &metadata3);
+
+    // Search for NFTs with season=2024
+    let results = client.search_nfts_by_metadata(
+        &0,
+        &10,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &Some(String::from_str(&env, "season")),
+        &Some(String::from_str(&env, "2024")),
+    );
+
+    assert_eq!(results.len(), 1);
+}
+
+#[test]
+fn test_search_nfts_combined_filters() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    let mut extensions = Map::new(&env);
+    extensions.set(String::from_str(&env, "season"), String::from_str(&env, "2024"));
+
+    let mut metadata1 = create_metadata_with_extensions(&env, "Dragon", "desc", "ipfs://1", extensions.clone());
+    metadata1.rarity = 3;
+    metadata1.creator = Some(creator.clone());
+
+    let mut metadata2 = create_metadata_with_extensions(&env, "Dragon", "desc", "ipfs://2", extensions.clone());
+    metadata2.rarity = 1;
+    metadata2.creator = Some(creator.clone());
+
+    let metadata3 = create_metadata(&env, "Treasure", "desc", "ipfs://3");
+
+    client.mint_reward_nft(&minter, &100, &player, &metadata1);
+    client.mint_reward_nft(&minter, &200, &player, &metadata2);
+    client.mint_reward_nft(&minter, &100, &player, &metadata3);
+
+    // Search for Dragon + rarity 3 + creator + hunt_id 100 + season extension
+    let results = client.search_nfts_by_metadata(
+        &0,
+        &10,
+        &Some(String::from_str(&env, "Dragon")),
+        &None,
+        &Some(3u32),
+        &None,
+        &Some(creator),
+        &Some(100u64),
+        &Some(String::from_str(&env, "season")),
+        &None,
+    );
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results.get(0).unwrap().metadata.title, String::from_str(&env, "Dragon"));
+}
+
+#[test]
+fn test_search_nfts_pagination() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+
+    for i in 0..15 {
+        let metadata = create_metadata(&env, &format!("NFT {}", i), "desc", "ipfs://test");
+        client.mint_reward_nft(&minter, &i, &player, &metadata);
+    }
+
+    // Get first page
+    let page1 = client.search_nfts_by_metadata(&0, &5, &None, &None, &None, &None, &None, &None, &None, &None);
+    assert_eq!(page1.len(), 5);
+
+    // Get second page
+    let page2 = client.search_nfts_by_metadata(&5, &5, &None, &None, &None, &None, &None, &None, &None, &None);
+    assert_eq!(page2.len(), 5);
+
+    // Get third page
+    let page3 = client.search_nfts_by_metadata(&10, &5, &None, &None, &None, &None, &None, &None, &None, &None);
+    assert_eq!(page3.len(), 5);
+
+    // Beyond available results
+    let page4 = client.search_nfts_by_metadata(&15, &5, &None, &None, &None, &None, &None, &None, &None, &None);
+    assert_eq!(page4.len(), 0);
+}
+
+#[test]
+fn test_search_nfts_no_filters_returns_all() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+
+    for i in 0..5 {
+        let metadata = create_metadata(&env, &format!("NFT {}", i), "desc", "ipfs://test");
+        client.mint_reward_nft(&minter, &i, &player, &metadata);
+    }
+
+    let results = client.search_nfts_by_metadata(&0, &10, &None, &None, &None, &None, &None, &None, &None, &None);
+    assert_eq!(results.len(), 5);
+}
+
+#[test]
+fn test_search_nfts_no_matches() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+
+    let metadata = create_metadata(&env, "Dragon", "desc", "ipfs://test");
+    client.mint_reward_nft(&minter, &1, &player, &metadata);
+
+    // Search for non-existent title
+    let results = client.search_nfts_by_metadata(
+        &0,
+        &10,
+        &Some(String::from_str(&env, "NonExistent")),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    assert_eq!(results.len(), 0);
+}

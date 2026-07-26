@@ -922,6 +922,145 @@ impl NftReward {
         result
     }
 
+    /// Searches NFTs by metadata fields with pagination support.
+    ///
+    /// Allows filtering NFTs by various metadata fields. All filter parameters are optional -
+    /// only provided filters are applied. Returns matching NFTs with pagination.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `offset` - The starting index for pagination (0-based)
+    /// * `limit` - The maximum number of NFTs to return (capped at MAX_SCAN_LIMIT)
+    /// * `title_filter` - Optional filter for NFT title (exact match)
+    /// * `hunt_title_filter` - Optional filter for hunt title (exact match)
+    /// * `rarity_filter` - Optional filter for rarity tier (0-5)
+    /// * `tier_filter` - Optional filter for custom tier
+    /// * `creator_filter` - Optional filter for creator address
+    /// * `hunt_id_filter` - Optional filter for hunt ID
+    /// * `extension_key` - Optional extension key to search for
+    /// * `extension_value` - Optional extension value to match (requires extension_key)
+    ///
+    /// # Returns
+    /// Vec<NftData> - A vector of matching NFT data structures, paginated by offset and limit
+    pub fn search_nfts_by_metadata(
+        env: Env,
+        offset: u32,
+        limit: u32,
+        title_filter: Option<String>,
+        hunt_title_filter: Option<String>,
+        rarity_filter: Option<u32>,
+        tier_filter: Option<u32>,
+        creator_filter: Option<Address>,
+        hunt_id_filter: Option<u64>,
+        extension_key: Option<String>,
+        extension_value: Option<String>,
+    ) -> Vec<NftData> {
+        let all_nft_ids = Storage::get_all_nft_ids(&env);
+        let mut matches = Vec::new(&env);
+
+        // Collect all matching NFTs first
+        for nft_id in all_nft_ids.iter() {
+            if let Some(nft) = Storage::get_nft(&env, nft_id) {
+                let mut is_match = true;
+
+                // Apply title filter
+                if let Some(ref filter) = title_filter {
+                    if nft.metadata.title != *filter {
+                        is_match = false;
+                    }
+                }
+
+                // Apply hunt title filter
+                if is_match {
+                    if let Some(ref filter) = hunt_title_filter {
+                        if nft.metadata.hunt_title != *filter {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply rarity filter
+                if is_match {
+                    if let Some(filter) = rarity_filter {
+                        if nft.metadata.rarity != filter {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply tier filter
+                if is_match {
+                    if let Some(filter) = tier_filter {
+                        if nft.metadata.tier != filter {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply creator filter
+                if is_match {
+                    if let Some(ref filter) = creator_filter {
+                        if nft.metadata.creator != Some(filter.clone()) {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply hunt ID filter
+                if is_match {
+                    if let Some(filter) = hunt_id_filter {
+                        if nft.hunt_id != filter {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply extension filter
+                if is_match {
+                    if let Some(ref key) = extension_key {
+                        if let Some(ref value) = extension_value {
+                            // Both key and value provided - exact match
+                            if let Some(stored_value) = nft.metadata.extensions.get(key.clone()) {
+                                if stored_value != *value {
+                                    is_match = false;
+                                }
+                            } else {
+                                is_match = false;
+                            }
+                        } else {
+                            // Only key provided - check if extension exists
+                            if !nft.metadata.extensions.contains_key(key.clone()) {
+                                is_match = false;
+                            }
+                        }
+                    }
+                }
+
+                if is_match {
+                    matches.push_back(nft);
+                }
+            }
+        }
+
+        // Apply pagination to results
+        let total_matches = matches.len();
+        if offset >= total_matches {
+            return Vec::new(&env);
+        }
+
+        let bounded_limit = limit.min(MAX_SCAN_LIMIT);
+        let end = offset.saturating_add(bounded_limit).min(total_matches);
+
+        let mut result = Vec::new(&env);
+        for i in offset..end {
+            if let Some(nft) = matches.get(i) {
+                result.push_back(nft.clone());
+            }
+        }
+
+        result
+    }
+
     /// Transfers an NFT to a new owner when the NFT is transferable.
     /// Non-transferable (soulbound) NFTs remain bound to the minting recipient.
     pub fn transfer_nft(
