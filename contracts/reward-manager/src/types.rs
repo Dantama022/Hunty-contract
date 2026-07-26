@@ -4,6 +4,14 @@ pub use reward_interface::{
     resolve_tier_amount, tiers_are_strictly_ascending, RewardConfig, TierError, TimeBasedRewardTier,
 };
 
+/// Outcome of a manually resolved distribution.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    Completed,
+    Refunded,
+}
+
 /// Semantic versioning struct.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]

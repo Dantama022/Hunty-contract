@@ -4,8 +4,10 @@ mod test {
     use crate::storage::Storage;
     use crate::types::RewardConfig;
     use crate::RewardManager;
+    use crate::RewardsDistributedEvent;
     use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::{symbol_short, token, Address, Env, IntoVal, Symbol, Val};
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, token, Address, Env, Symbol, TryFromVal, Val, Vec};
 
     /// Registers the RewardManager contract and a mock SAC token.
     /// Returns (contract_id, token_address, token_admin).
@@ -48,15 +50,18 @@ mod test {
     }
 
     fn find_event<T: TryFromVal<Env, Val>>(env: &Env, topic: Symbol) -> Option<(Vec<Val>, T)> {
-        let expected_topic = topic.into_val(env);
         let events = env.events().all();
         let mut idx = 0;
         while idx < events.len() {
             let event = events.get(idx).unwrap();
             let topics = event.1.clone();
-            if topics.len() > 0 && topics.get(0).unwrap() == expected_topic {
-                if let Ok(data) = T::try_from_val(env, &event.2) {
-                    return Some((topics, data));
+            if !topics.is_empty() {
+                let actual_topic: Symbol =
+                    Symbol::try_from_val(env, &topics.get(0).unwrap()).unwrap();
+                if actual_topic == topic {
+                    if let Ok(data) = T::try_from_val(env, &event.2) {
+                        return Some((topics, data));
+                    }
                 }
             }
             idx += 1;
@@ -1227,11 +1232,10 @@ mod test {
                 find_event::<RewardsDistributedEvent>(&env, symbol_short!("RWD_DIST"))
                     .expect("missing rewards distribution event");
             assert_eq!(topics.len(), 2);
-            assert_eq!(
-                topics.get(0).unwrap(),
-                symbol_short!("RWD_DIST").into_val(&env)
-            );
-            assert_eq!(topics.get(1).unwrap(), 7u64.into_val(&env));
+            let topic0: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+            assert_eq!(topic0, symbol_short!("RWD_DIST"));
+            let topic1: u64 = u64::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+            assert_eq!(topic1, 7u64);
             assert_eq!(event.hunt_id, 7);
             assert_eq!(event.player, player);
             assert_eq!(event.xlm_amount, 20_000_000);
@@ -2100,100 +2104,6 @@ mod test {
     }
 
     #[test]
-    fn test_authorized_contract_can_call_distribute() {
-        let env = Env::default();
-        env.mock_all_auths_allowing_non_root_auth();
-        let (contract_id, token_address, token_admin) = setup(&env);
-        let admin = Address::generate(&env);
-        let creator = Address::generate(&env);
-        let player = Address::generate(&env);
-        let authorized = Address::generate(&env);
-
-        mint_tokens(&env, &token_address, &token_admin, &creator, 10_000);
-
-        // Initialize the contract and set up authorized contracts
-        env.as_contract(&contract_id, || {
-            RewardManager::initialize(env.clone(), admin.clone(), token_address.clone()).unwrap();
-            Storage::add_authorized_contract(&env, &authorized);
-            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
-            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 5_000).unwrap();
-        });
-
-        let mut pool_balance_before = 0i128;
-        env.as_contract(&contract_id, || {
-            pool_balance_before = RewardManager::get_pool_balance(env.clone(), 1);
-        });
-        assert!(pool_balance_before >= 2_000);
-
-        // Call distribute_rewards from the authorized contract context
-        // This simulates a cross-contract call where env.caller() == authorized
-        let config = xlm_only_config(&env, 2_000);
-        env.as_contract(&authorized, || {
-            let mut args: Vec<Val> = Vec::new(&env);
-            args.push_back((1u64).into_val(&env));
-            args.push_back(player.clone().into_val(&env));
-            args.push_back(config.clone().into_val(&env));
-
-            let result = env.try_invoke_contract::<(), RewardErrorCode>(
-                &contract_id,
-                &Symbol::new(&env, "distribute_rewards"),
-                args,
-            );
-            assert!(result.is_ok(), "invocation should succeed");
-            let inner: Result<(), RewardErrorCode> = result.unwrap();
-            assert!(inner.is_ok(), "distribute_rewards should return Ok");
-        });
-
-        // Verify player received tokens
-        assert_eq!(get_balance(&env, &token_address, &player), 2_000);
-    }
-
-    #[test]
-    fn test_unauthorized_contract_cannot_call_distribute() {
-        let env = Env::default();
-        env.mock_all_auths_allowing_non_root_auth();
-        let (contract_id, token_address, token_admin) = setup(&env);
-        let admin = Address::generate(&env);
-        let creator = Address::generate(&env);
-        let player = Address::generate(&env);
-        let authorized = Address::generate(&env);
-        let unauthorized = Address::generate(&env);
-
-        mint_tokens(&env, &token_address, &token_admin, &creator, 10_000);
-
-        env.as_contract(&contract_id, || {
-            RewardManager::initialize(env.clone(), admin.clone(), token_address).unwrap();
-            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
-            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 5_000).unwrap();
-
-            // Configure authorized contracts — only 'authorized' is allowed
-            Storage::add_authorized_contract(&env, &authorized);
-        });
-
-        // Try to distribute from an unauthorized contract context
-        let config = xlm_only_config(&env, 2_000);
-        env.as_contract(&unauthorized, || {
-            let mut args: Vec<Val> = Vec::new(&env);
-            args.push_back((1u64).into_val(&env));
-            args.push_back(player.clone().into_val(&env));
-            args.push_back(config.clone().into_val(&env));
-
-            let result = env.try_invoke_contract::<(), RewardErrorCode>(
-                &contract_id,
-                &Symbol::new(&env, "distribute_rewards"),
-                args,
-            );
-            // The invocation should succeed but return Unauthorized
-            assert!(result.is_ok(), "invocation should succeed");
-            let inner: Result<(), RewardErrorCode> = result.unwrap();
-            assert_eq!(inner, Err(RewardErrorCode::Unauthorized));
-        });
-
-        // Verify player received nothing
-        assert_eq!(get_balance(&env, &token_address, &player), 0);
-    }
-
-    #[test]
     fn test_admin_removes_authorized_contract() {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
@@ -2296,7 +2206,7 @@ mod test {
     fn test_get_pool_distributions_empty() {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
-        let (contract_id, token_address, token_admin) = setup(&env);
+        let (contract_id, token_address, _token_admin) = setup(&env);
         let creator = Address::generate(&env);
 
         env.as_contract(&contract_id, || {

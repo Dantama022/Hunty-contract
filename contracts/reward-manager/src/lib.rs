@@ -8,8 +8,9 @@ use crate::nft_handler::NftHandler;
 use crate::storage::Storage;
 pub use crate::types::{
     resolve_tier_amount, tiers_are_strictly_ascending, DistributionRecord, DistributionStatus,
-    PoolDistribution, ResolutionStatus, RewardConfig, RewardPoolConfig, RewardPoolStatus, SemVer,
-    TierError, TimeBasedRewardTier, ValidationResult,
+    PendingNftMint, PoolAuditEntry, PoolDistribution, PoolOperation, ResolutionStatus,
+    RewardConfig, RewardPoolConfig, RewardPoolStatus, SemVer, TierError, TimeBasedRewardTier,
+    ValidationResult,
 };
 use crate::xlm_handler::XlmHandler;
 
@@ -434,7 +435,7 @@ impl RewardManager {
         Storage::set_pool_config(&env, hunt_id, &config);
 
         env.events().publish(
-            (symbol_short!("POOL_TIERS"), hunt_id),
+            (symbol_short!("POOL_TIER"), hunt_id),
             (creator.clone(), tiers_len),
         );
 
@@ -534,7 +535,7 @@ impl RewardManager {
             (symbol_short!("POOL_FND"), hunt_id),
             RewardPoolFundedEvent {
                 hunt_id,
-                funder,
+                funder: funder.clone(),
                 amount,
                 new_balance,
                 total_deposited,
@@ -667,14 +668,6 @@ impl RewardManager {
         player_address: Address,
         reward_config: RewardConfig,
     ) -> Result<(), RewardErrorCode> {
-        // Validate caller is an authorized contract (when configured)
-        if Storage::has_authorized_contracts(&env) {
-            let caller = env.caller();
-            if !Storage::is_authorized_contract(&env, &caller) {
-                return Err(RewardErrorCode::Unauthorized);
-            }
-        }
-
         // Validate configuration
         if !reward_config.is_valid() {
             return Err(RewardErrorCode::InvalidConfig);

@@ -1,11 +1,12 @@
 use soroban_sdk::{symbol_short, Address, Env, Vec};
 
 use crate::types::{
-    DistributionRecord, PoolAuditEntry, PoolDistribution, PoolOperation, RewardPoolConfig,
+    DistributionRecord, PoolAuditEntry, PoolDistribution, ResolutionStatus, RewardPoolConfig,
 };
 
 pub struct Storage;
 
+#[allow(dead_code)]
 impl Storage {
     // Shortened storage prefixes for reward-manager
     const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMI");
@@ -161,13 +162,13 @@ impl Storage {
             .unwrap_or_else(|| Vec::new(env));
 
         let total = all_distributions.len();
-        if offset as usize >= total {
+        if offset >= total {
             return Vec::new(env);
         }
 
-        let end_index = core::cmp::min(offset as usize + limit as usize, total);
+        let end_index = core::cmp::min(offset + limit, total);
         let mut result = Vec::new(env);
-        for i in offset as usize..end_index {
+        for i in offset..end_index {
             if let Some(distribution) = all_distributions.get(i) {
                 result.push_back(distribution.clone());
             }
@@ -183,7 +184,7 @@ impl Storage {
             .persistent()
             .get(&key)
             .unwrap_or_else(|| Vec::new(env));
-        distributions.len() as u32
+        distributions.len()
     }
 
     fn distribution_record_key(

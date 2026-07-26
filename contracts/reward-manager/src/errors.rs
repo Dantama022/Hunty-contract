@@ -60,4 +60,6 @@ pub enum RewardErrorCode {
 
     /// No pending failed NFT mint found for retry.
     NftMintPendingNotFound = 23,
+    /// No distribution record found for this hunt/player pair.
+    DistributionNotFound = 24,
 }
