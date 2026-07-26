@@ -4,6 +4,7 @@ use soroban_sdk::{symbol_short, Address, Env, String, Vec, Symbol};
 /// Storage layer for NFTs.
 pub struct Storage;
 
+#[allow(dead_code)]
 impl Storage {
     // Shortened storage prefixes for nft-reward
     const NFT_KEY: soroban_sdk::Symbol = symbol_short!("NF");
@@ -67,6 +68,9 @@ impl Storage {
         (symbol_short!("AUTH"), contract.clone())
     }
 
+    pub fn is_initialized(env: &Env) -> bool {
+        env.storage().instance().has(&Self::INITIALIZED_KEY)
+            || env.storage().persistent().has(&Self::INITIALIZED_KEY)
     pub fn remove_nft(env: &Env, nft_id: u64) {
         let key = Self::nft_key(nft_id);
         env.storage().persistent().remove(&key);
@@ -80,6 +84,17 @@ impl Storage {
         env.storage().instance().get(&Self::ADMIN_KEY)
     }
 
+    // --- Reward Manager ---
+
+    pub fn save_reward_manager(env: &Env, reward_mgr: &Address) {
+        env.storage().instance().set(&Self::REWARD_MGR_KEY, reward_mgr);
+    }
+
+    pub fn get_reward_manager(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&Self::REWARD_MGR_KEY)
+    }
+
+    // --- Max supply ---
     pub fn set_reward_manager(env: &Env, address: &Address) {
         env.storage().instance().set(&Self::REWARD_MGR_KEY, address);
     }
@@ -88,6 +103,15 @@ impl Storage {
         env.storage().instance().set(&Self::REWARD_MGR_KEY, address);
     }
 
+    pub fn get_max_supply(env: &Env) -> Option<u64> {
+        // Check instance storage first, then fall back to persistent storage.
+        if let Some(v) = env.storage().instance().get(&Self::MAX_SUPPLY_KEY) {
+            return Some(v);
+        }
+        env.storage()
+            .persistent()
+            .get::<_, Option<u64>>(&Self::MAX_SUPPLY_KEY)
+            .unwrap_or(None)
     pub fn get_reward_manager(env: &Env) -> Option<Address> {
         env.storage().instance().get(&Self::REWARD_MGR_KEY)
     }

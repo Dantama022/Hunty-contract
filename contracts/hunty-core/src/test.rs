@@ -17,11 +17,14 @@ use std::string::ToString;
 
 #[cfg(test)]
 mod test {
+    // Benchmark-style micro tests (best-effort gas/footprint proxy)
+
     use super::*;
     use soroban_sdk::{Address, Env, IntoVal, String, Symbol, TryIntoVal, Vec};
     // Bring Soroban testutils traits into scope (generate addresses, set ledger info, register contracts).
     use crate::errors::{HuntError, HuntErrorCode};
     use crate::storage::Storage;
+    use crate::types::{BatchClueInput, HuntStatus, TimeBonusConfig};
     use crate::types::{
         ClueAddedEvent, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent,
         HuntClosedEvent, HuntCompletedEvent, HuntCreatedEvent, HuntStatus, HuntStatusChangedEvent,
@@ -928,6 +931,169 @@ mod test {
     }
 
     #[test]
+    fn test_add_clues_success() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+        env.mock_all_auths();
+        let creator = Address::generate(&env);
+
+        let (ids, hunt, clues) = with_core_contract(&env, |env, _cid| {
+            let hunt_id = HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Batch Hunt"),
+                String::from_str(env, "Description"),
+                None,
+                None,
+            )
+            .unwrap();
+            let clues = Vec::from_array(
+                env,
+                [
+                    BatchClueInput {
+                        question: String::from_str(env, "Q1"),
+                        answer: String::from_str(env, "a1"),
+                        points: 10,
+                        is_required: true,
+                        difficulty: 1,
+                    },
+                    BatchClueInput {
+                        question: String::from_str(env, "Q2"),
+                        answer: String::from_str(env, "a2"),
+                        points: 20,
+                        is_required: false,
+                        difficulty: 3,
+                    },
+                ],
+            );
+
+            let ids = HuntyCore::add_clues(env.clone(), hunt_id, clues).unwrap();
+            let hunt = Storage::get_hunt(env, hunt_id).unwrap();
+            let stored = HuntyCore::list_clues(env.clone(), hunt_id, 0, 10);
+            (ids, hunt, stored)
+        });
+
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids.get(0).unwrap(), 1);
+        assert_eq!(ids.get(1).unwrap(), 2);
+        assert_eq!(hunt.total_clues, 2);
+        assert_eq!(hunt.required_clues, 1);
+        assert_eq!(clues.len(), 2);
+        assert_eq!(clues.get(0).unwrap().points, 10);
+        assert_eq!(clues.get(1).unwrap().difficulty, 3);
+    }
+
+    #[test]
+    fn test_add_clues_rejects_batch_over_clue_limit() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+        env.mock_all_auths();
+        let creator = Address::generate(&env);
+
+        let clue_count = with_core_contract(&env, |env, _cid| {
+            let hunt_id = HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Batch Hunt"),
+                String::from_str(env, "Description"),
+                None,
+                None,
+            )
+            .unwrap();
+
+            for _ in 0..99 {
+                HuntyCore::add_clue(
+                    env.clone(),
+                    hunt_id,
+                    String::from_str(env, "Q"),
+                    String::from_str(env, "a"),
+                    1,
+                    false,
+                    1,
+                )
+                .unwrap();
+            }
+
+            let clues = Vec::from_array(
+                env,
+                [
+                    BatchClueInput {
+                        question: String::from_str(env, "Q100"),
+                        answer: String::from_str(env, "a100"),
+                        points: 1,
+                        is_required: false,
+                        difficulty: 1,
+                    },
+                    BatchClueInput {
+                        question: String::from_str(env, "Q101"),
+                        answer: String::from_str(env, "a101"),
+                        points: 1,
+                        is_required: false,
+                        difficulty: 1,
+                    },
+                ],
+            );
+
+            let err = HuntyCore::add_clues(env.clone(), hunt_id, clues).unwrap_err();
+            assert_eq!(err, HuntErrorCode::TooManyClues);
+            Storage::get_clue_counter(env, hunt_id)
+        });
+
+        assert_eq!(clue_count, 99);
+    }
+
+    #[test]
+    fn test_add_clues_invalid_hunt_status_not_draft() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+        env.mock_all_auths();
+        let creator = Address::generate(&env);
+
+        with_core_contract(&env, |env, _cid| {
+            let hunt_id = HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Batch Hunt"),
+                String::from_str(env, "Description"),
+                None,
+                None,
+            )
+            .unwrap();
+            HuntyCore::add_clue(
+                env.clone(),
+                hunt_id,
+                String::from_str(env, "Required"),
+                String::from_str(env, "a"),
+                1,
+                true,
+                1,
+            )
+            .unwrap();
+            let mut hunt = Storage::get_hunt(env, hunt_id).unwrap();
+            hunt.reward_config =
+                crate::types::HuntRewardConfig::new(env, 100, false, None, 1, 0, 0);
+            Storage::save_hunt(env, &hunt);
+            HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
+
+            let clues = Vec::from_array(
+                env,
+                [BatchClueInput {
+                    question: String::from_str(env, "Q2"),
+                    answer: String::from_str(env, "a2"),
+                    points: 1,
+                    is_required: false,
+                    difficulty: 1,
+                }],
+            );
+
+            let err = HuntyCore::add_clues(env.clone(), hunt_id, clues).unwrap_err();
+            assert_eq!(err, HuntErrorCode::InvalidHuntStatus);
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_add_clue_unauthorized() {
     fn test_create_hunt_description_too_long() {
         let env = Env::default();
         env.ledger().set_timestamp(1_700_000_000);
@@ -2944,11 +3110,35 @@ mod test {
     #[test]
     fn test_cancel_hunt_not_found() {
         let env = Env::default();
+        env.mock_all_auths();
         let creator = Address::generate(&env);
 
         with_core_contract(&env, |env, _cid| {
             let err = HuntyCore::cancel_hunt(env.clone(), 999, creator.clone()).unwrap_err();
             assert_eq!(err, HuntErrorCode::HuntNotFound);
+        });
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_cancel_hunt_requires_creator_auth() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+
+        let creator = Address::generate(&env);
+
+        with_core_contract(&env, |env, _cid| {
+            let hunt_id = HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Test Hunt"),
+                String::from_str(env, "Test description"),
+                None,
+                None,
+            )
+            .unwrap();
+
+            HuntyCore::cancel_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
         });
     }
 
@@ -7467,6 +7657,107 @@ mod test {
     fn test_is_blacklisted_false_by_default() {
         let env = Env::default();
         let creator = Address::generate(&env);
+        let player = Address::generate(&env);
+
+        let (hunt_id, contract_id) =
+            setup_completed_hunt_with_rewards(&env, &creator, &player, 5, 1000);
+
+        // Try to complete the hunt — should fail with InvalidHuntStatus
+        env.mock_all_auths();
+        let result = as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::complete_hunt(env.clone(), hunt_id, player.clone())
+        });
+        assert_eq!(result, Err(HuntErrorCode::InvalidHuntStatus));
+    }
+
+    #[test]
+    fn test_get_hunt_statistics_mixed_completion_states() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+
+        let creator = Address::generate(&env);
+
+    let player1 = Address::generate(&env);
+    let player2 = Address::generate(&env);
+    let player3 = Address::generate(&env);
+    let question = String::from_str(&env, "Q");
+    let answer = String::from_str(&env, "a");
+
+    // Register contract and create hunt
+    let contract_id = env.register(HuntyCore, ());
+    let hunt_id = execute_in_contract(&env, &contract_id, |env| {
+        HuntyCore::create_hunt(
+            env.clone(),
+            creator.clone(),
+            String::from_str(env, "Mixed Hunt"),
+            String::from_str(env, "Desc"),
+            None,
+            None,
+        )
+        .unwrap()
+    });
+
+    // Add a single required clue worth 10 points and activate
+    env.mock_all_auths();
+    execute_in_contract(&env, &contract_id, |env| {
+        HuntyCore::add_clue(
+            env.clone(),
+            hunt_id,
+            question.clone(),
+            answer.clone(),
+            10,
+            true,
+        )
+        .unwrap();
+        HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
+    });
+
+    // Register three players
+    env.mock_all_auths();
+    execute_in_contract(&env, &contract_id, |env| {
+        HuntyCore::register_player(env.clone(), hunt_id, player1.clone()).unwrap();
+    });
+    env.mock_all_auths();
+    execute_in_contract(&env, &contract_id, |env| {
+        HuntyCore::register_player(env.clone(), hunt_id, player2.clone()).unwrap();
+    });
+    env.mock_all_auths();
+    execute_in_contract(&env, &contract_id, |env| {
+        HuntyCore::register_player(env.clone(), hunt_id, player3.clone()).unwrap();
+    });
+
+    // Player1 and Player2 solve the required clue
+    env.mock_all_auths();
+    execute_in_contract(&env, &contract_id, |env| {
+        HuntyCore::submit_answer(env.clone(), hunt_id, 1, player1.clone(), answer.clone()).unwrap();
+    });
+    env.mock_all_auths();
+    execute_in_contract(&env, &contract_id, |env| {
+        HuntyCore::submit_answer(env.clone(), hunt_id, 1, player2.clone(), answer.clone()).unwrap();
+    });
+
+    // Player3 remains incomplete (no submissions)
+
+    // Fetch statistics and validate exact invariants
+    let stats = execute_in_contract(&env, &contract_id, |env| {
+        HuntyCore::get_hunt_statistics(env.clone(), hunt_id).unwrap()
+    });
+
+    // 3 players total, 2 completed -> floor(2/3*100) == 66
+    assert_eq!(stats.total_players, 3);
+    assert_eq!(stats.completed_count, 2);
+    assert_eq!(stats.completion_rate_percent, 66);
+
+    // Two players solved the single 10-point required clue => total 20
+    // Average must be computed over all 3 participants: floor(20 / 3) == 6
+    assert_eq!(stats.total_score_sum, 20);
+    assert_eq!(stats.average_score, 6);
+}
+
+        // Try to complete the hunt — should fail with InvalidHuntStatus
+        env.mock_all_auths();
+        let result = as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::complete_hunt(env.clone(), hunt_id, player.clone())
         let result = with_core_contract(&env, |env, _cid| {
             HuntyCore::is_blacklisted(env.clone(), creator.clone())
         });
@@ -7483,5 +7774,57 @@ mod test {
         progress.complete_clue(&env, 2, 20).unwrap();
         progress.complete_clue(&env, 3, 30).unwrap();
         assert_eq!(progress.total_score, 60);
+    }
+
+    #[test]
+    fn test_compact_storage_roundtrip() {
+        let env = Env::default();
+        let player = Address::generate(&env);
+        let hunt_id = 42u64;
+        let activated_at = 1_700_000_000u64;
+        let started_at = 1_700_000_600u64; // 10 minutes delta
+        let completed_at = 1_700_003_600u64; // 50 minutes delta from started_at
+
+        // Recreate PlayerProgress structure
+        let mut progress = crate::types::PlayerProgress::new(&env, player.clone(), hunt_id, started_at);
+        progress.is_completed = true;
+        progress.reward_claimed = true;
+        progress.completed_at = completed_at;
+        progress.total_score = 1000;
+        progress.required_completed_count = 5;
+
+        // Record some clues and attempts
+        progress.completed_clues.push_back(1);
+        progress.completed_clues.push_back(2);
+        progress.clue_attempts.set(1, 3);
+        progress.clue_attempts.set(2, 1);
+
+        // Convert to compact stored form
+        let stored = progress.to_stored(activated_at);
+
+        // Verify stored compact values
+        assert_eq!(stored.started_at_delta, 600);
+        assert_eq!(stored.completed_at_delta, 3000);
+        assert_eq!(stored.flags, 0b0000_0011);
+        assert_eq!(stored.total_score, 1000);
+        assert_eq!(stored.required_completed_count, 5);
+
+        // Reconstruct from stored
+        let restored = crate::types::PlayerProgress::from_stored(&env, stored, player.clone(), hunt_id, activated_at);
+
+        // Verify restored matches original
+        assert_eq!(restored.player, player);
+        assert_eq!(restored.hunt_id, hunt_id);
+        assert_eq!(restored.started_at, started_at);
+        assert_eq!(restored.completed_at, completed_at);
+        assert_eq!(restored.is_completed, true);
+        assert_eq!(restored.reward_claimed, true);
+        assert_eq!(restored.total_score, 1000);
+        assert_eq!(restored.required_completed_count, 5);
+        assert_eq!(restored.completed_clues.len(), 2);
+        assert_eq!(restored.completed_clues.get(0).unwrap(), 1);
+        assert_eq!(restored.completed_clues.get(1).unwrap(), 2);
+        assert_eq!(restored.clue_attempts.get(1).unwrap(), 3);
+        assert_eq!(restored.clue_attempts.get(2).unwrap(), 1);
     }
 }

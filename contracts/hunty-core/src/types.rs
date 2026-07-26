@@ -99,6 +99,18 @@ pub struct Clue {
     pub hint_penalty_points: u32,
 }
 
+/// Input payload for adding multiple clues in one contract invocation.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BatchClueInput {
+    pub question: String,
+    pub answer: String,
+    pub points: u32,
+    pub is_required: bool,
+    /// Difficulty multiplier (1-10). Points earned = points * difficulty.
+    pub difficulty: u8,
+}
+
 /// Clue info returned by get_clue/list_clues. Excludes answer hash.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,12 +178,34 @@ pub struct Location {
 
 /// Internal storage representation of player progress.
 /// Does not store `player` or `hunt_id` — those are already the storage key.
+///
+/// ## Compact encoding
+/// - Timestamps are delta-encoded as `u32` offsets from the hunt's `activated_at`,
+///   saving 4 bytes each vs full `u64` UNIX timestamps. The max delta (~136 years)
+///   far exceeds any realistic hunt duration.
+/// - Boolean fields (`is_completed`, `reward_claimed`) are packed into `flags`.
+/// - `clue_attempts` values use `u32` (Soroban's smallest XDR integer).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct StoredPlayerProgress {
     pub completed_clues: Vec<u32>,
     pub hinted_clues: Vec<u32>,
     pub total_score: u32,
+    pub required_completed_count: u32,
+
+    /// Seconds elapsed from hunt `activated_at` to player registration.
+    /// Reconstruct absolute: `activated_at + started_at_delta`.
+    pub started_at_delta: u32,
+
+    /// Seconds elapsed from player registration to hunt completion, or 0 if not completed.
+    /// Reconstruct absolute: `activated_at + started_at_delta + completed_at_delta`.
+    pub completed_at_delta: u32,
+
+    /// Bit flags for boolean fields to reduce storage footprint.
+    /// BIT0 (1): is_completed
+    /// BIT1 (2): reward_claimed
+    /// BIT2–BIT7: reserved for future use
+    pub flags: u8,
     pub started_at: u64,
     pub completed_at: u64,
     /// Packed boolean flags: bit 0 = is_completed, bit 1 = reward_claimed
@@ -179,6 +213,8 @@ pub struct StoredPlayerProgress {
     pub recent_submissions: Vec<u64>,
     pub clue_last_attempts: Map<u32, u64>,
 }
+
+
 
 /// Public view of player progress, with `player` and `hunt_id` reconstructed from the key.
 #[contracttype]
@@ -237,11 +273,34 @@ impl PlayerProgress {
     }
 
     /// Convert to the compact form stored on-chain (drops redundant key fields).
-    pub fn to_stored(&self) -> StoredPlayerProgress {
+    ///
+    /// `activated_at` is the hunt's activation timestamp, used to delta-encode
+    /// `started_at` and `completed_at` into compact `u32` offsets.
+    pub fn to_stored(&self, activated_at: u64) -> StoredPlayerProgress {
+        let mut flags: u8 = 0;
+        if self.is_completed {
+            flags |= 0b0000_0001;
+        }
+        if self.reward_claimed {
+            flags |= 0b0000_0010;
+        }
+
+        // Delta-encode timestamps relative to hunt activation.
+        let started_at_delta = self.started_at.saturating_sub(activated_at) as u32;
+        let completed_at_delta = if self.completed_at == 0 {
+            0u32
+        } else {
+            self.completed_at.saturating_sub(self.started_at) as u32
+        };
+
         StoredPlayerProgress {
             completed_clues: self.completed_clues.clone(),
             hinted_clues: self.hinted_clues.clone(),
             total_score: self.total_score,
+            required_completed_count: self.required_completed_count,
+            started_at_delta,
+            completed_at_delta,
+            flags,
             started_at: self.started_at,
             completed_at: self.completed_at,
             flags: Self::bools_to_flags(self.is_completed, self.reward_claimed),
@@ -250,7 +309,32 @@ impl PlayerProgress {
         }
     }
 
+
     /// Reconstruct from stored form plus the key fields.
+    ///
+    /// `activated_at` is the hunt's activation timestamp, used to reconstruct
+    /// absolute timestamps from the stored deltas.
+    pub fn from_stored(
+        env: &Env,
+        stored: StoredPlayerProgress,
+        player: Address,
+        hunt_id: u64,
+        activated_at: u64,
+    ) -> Self {
+        let mut completed_clue_index = Map::new(env);
+        for i in 0..stored.completed_clues.len() {
+            let clue_id = stored.completed_clues.get(i).unwrap();
+            completed_clue_index.set(clue_id, true);
+        }
+
+        // Reconstruct absolute timestamps from deltas.
+        let started_at = activated_at + (stored.started_at_delta as u64);
+        let completed_at = if stored.completed_at_delta == 0 {
+            0u64
+        } else {
+            started_at + (stored.completed_at_delta as u64)
+        };
+
     pub fn from_stored(stored: StoredPlayerProgress, player: Address, hunt_id: u64) -> Self {
         Self {
             player,
@@ -364,7 +448,6 @@ impl RewardConfig {
 pub struct HuntCreatedEvent {
     pub hunt_id: u64,
     pub creator: Address,
-    pub title: String,
 }
 
 #[contracttype]

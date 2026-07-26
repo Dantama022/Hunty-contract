@@ -2,6 +2,10 @@
 use crate::errors::{HuntError, HuntErrorCode};
 use crate::storage::{HuntCache, Storage};
 use crate::types::{
+    AnswerIncorrectEvent, BatchClueInput, Clue, ClueAddedEvent, ClueCompletedEvent, ClueInfo,
+    ClueRemovedEvent, Hunt, HuntActivatedEvent, HuntCancelledEvent, HuntCompletedEvent,
+    HuntCreatedEvent, HuntDeactivatedEvent, HuntStatistics, HuntStatus, LeaderboardEntry,
+    PlayerProgress, PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, TimeBonusConfig,
     AnswerIncorrectEvent, Clue, ClueAddedEvent, ClueAliasesAddedEvent, ClueCompletedEvent,
     ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt, HuntActivatedEvent,
     HuntArchivedEvent, HuntCache, HuntCancelledEvent, HuntClosedEvent, HuntCompletedEvent,
@@ -192,7 +196,6 @@ impl HuntyCore {
         let event = HuntCreatedEvent {
             hunt_id,
             creator: creator.clone(),
-            title: title.clone(),
         };
         env.events()
             .publish((Symbol::new(&env, "HuntCreated"), hunt_id), event);
@@ -454,6 +457,52 @@ impl HuntyCore {
         difficulty: Option<u32>,
         weight: Option<u32>,
     ) -> Result<u32, HuntErrorCode> {
+        let hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
+        hunt.creator.require_auth();
+        if hunt.status != HuntStatus::Draft {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+        if Storage::get_clue_counter(&env, hunt_id) >= MAX_CLUES_PER_HUNT {
+            return Err(HuntErrorCode::from(HuntError::TooManyClues {
+                hunt_id,
+                limit: MAX_CLUES_PER_HUNT,
+            }));
+        }
+
+        let clue_id = Self::insert_clue(
+            &env,
+            hunt_id,
+            &hunt.creator,
+            question,
+            answer,
+            points,
+            is_required,
+            difficulty,
+        )?;
+        let mut updated = hunt;
+        Self::sync_hunt_clue_counts(&env, hunt_id, &mut updated);
+        Storage::save_hunt(&env, &updated);
+
+        Ok(clue_id)
+    }
+
+    /// Adds multiple clues to a draft hunt in one invocation. Only the hunt creator can add clues.
+    ///
+    /// The batch is validated against the per-hunt clue cap before writing any new clues,
+    /// so a request that would exceed the limit fails without partially adding clues.
+    pub fn add_clues(
+        env: Env,
+        hunt_id: u64,
+        clues: Vec<BatchClueInput>,
+    ) -> Result<Vec<u32>, HuntErrorCode> {
+        let hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
+        hunt.creator.require_auth();
+        if hunt.status != HuntStatus::Draft {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+
+        let existing = Storage::get_clue_counter(&env, hunt_id);
+        if existing.saturating_add(clues.len()) > MAX_CLUES_PER_HUNT {
         // Fast validation using instance cache (cheaper than persistent read)
         let cache = Self::get_hunt_cache_or_load(&env, hunt_id)?;
         if cache.status != HuntStatus::Draft {
@@ -466,6 +515,55 @@ impl HuntyCore {
                 limit: MAX_CLUES_PER_HUNT,
             }));
         }
+
+        let mut clue_ids = Vec::new(&env);
+        for i in 0..clues.len() {
+            let clue = clues.get(i).unwrap();
+            let clue_id = Self::insert_clue(
+                &env,
+                hunt_id,
+                &hunt.creator,
+                clue.question,
+                clue.answer,
+                clue.points,
+                clue.is_required,
+                clue.difficulty,
+            )?;
+            clue_ids.push_back(clue_id);
+        }
+
+        let mut updated = hunt;
+        Self::sync_hunt_clue_counts(&env, hunt_id, &mut updated);
+        Storage::save_hunt(&env, &updated);
+
+        Ok(clue_ids)
+    }
+
+    fn insert_clue(
+        env: &Env,
+        hunt_id: u64,
+        creator: &Address,
+        question: String,
+        answer: String,
+        points: u32,
+        is_required: bool,
+        difficulty: u8,
+    ) -> Result<u32, HuntErrorCode> {
+        if difficulty == 0 || difficulty > 10 {
+            return Err(HuntErrorCode::InvalidDifficulty);
+        }
+
+        let qlen = question.len();
+        if qlen == 0 || qlen > MAX_QUESTION_LENGTH {
+            return Err(HuntErrorCode::InvalidQuestion);
+        }
+        if points == 0 {
+            return Err(HuntErrorCode::InvalidPoints);
+        }
+        let answer_hash =
+            Self::normalize_and_hash_answer(env, &answer).map_err(HuntErrorCode::from)?;
+        let clue_id = Storage::next_clue_id(env, hunt_id);
+        let mut answer_hashes: Vec<BytesN<32>> = Vec::new(env);
         let question = crate::sanitization::StringSanitizer::sanitize(
             &env,
             &question,
@@ -495,6 +593,14 @@ impl HuntyCore {
             hint: None,
             hint_penalty_points: 0,
         };
+        Storage::save_clue(env, hunt_id, &clue);
+        let event = ClueAddedEvent {
+            hunt_id,
+            clue_id,
+            creator: creator.clone(),
+            points,
+            is_required,
+            difficulty,
         Storage::save_clue(&env, hunt_id, &clue);
         let mut updated = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
         updated.total_clues += 1;
@@ -514,7 +620,8 @@ impl HuntyCore {
             weight,
         };
         env.events()
-            .publish((Symbol::new(&env, "ClueAdded"), hunt_id, clue_id), event);
+            .publish((Symbol::new(env, "ClueAdded"), hunt_id, clue_id), event);
+
         Ok(clue_id)
     }
 
@@ -1219,6 +1326,8 @@ impl HuntyCore {
     }
 
     pub fn cancel_hunt(env: Env, hunt_id: u64, caller: Address) -> Result<(), HuntErrorCode> {
+        // Require the caller to authorize. Without this, an attacker could spoof `caller`
+        // and cancel hunts by passing the creator address.
         caller.require_auth();
 
         // Fast validation using instance cache
@@ -1226,6 +1335,10 @@ impl HuntyCore {
         if caller != cache.creator {
             return Err(HuntErrorCode::Unauthorized);
         }
+
+
+        // Cannot cancel a completed hunt
+        if hunt.status == HuntStatus::Completed {
         if cache.status == HuntStatus::Completed {
             return Err(HuntErrorCode::InvalidHuntStatus);
         }

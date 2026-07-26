@@ -494,6 +494,14 @@ impl Storage {
         player: &Address,
     ) -> Option<PlayerProgress> {
         let key = Self::progress_key(hunt_id, player);
+        let activated_at = Self::get_hunt(env, hunt_id)
+            .map(|h| h.activated_at)
+            .unwrap_or(0);
+        env
+            .storage()
+            .persistent()
+            .get::<_, StoredPlayerProgress>(&key)
+            .map(|stored| PlayerProgress::from_stored(env, stored, player.clone(), hunt_id, activated_at))
         let raw_val: Option<soroban_sdk::Val> = env.storage().persistent().get(&key);
         raw_val.map(|val| {
             #[contracttype]

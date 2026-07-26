@@ -119,6 +119,15 @@ export interface ClueAddedEvent {
   creator: string;
   hunt_id: u64;
   is_required: boolean;
+  difficulty: number;
+}
+
+export interface BatchClueInput {
+  question: string;
+  answer: string;
+  points: number;
+  is_required: boolean;
+  difficulty: number;
   points: u32;
   question: string;
 }
@@ -180,6 +189,33 @@ export interface HuntActivatedEvent {
   hunt_id: u64;
 }
 
+  async add_clue({
+    hunt_id,
+    question,
+    answer,
+    points,
+    is_required,
+    difficulty = 1,
+  }: {
+    hunt_id: bigint;
+    question: string;
+    answer: string;
+    points: number;
+    is_required: boolean;
+    difficulty?: number;
+  }): Promise<AssembledTransaction<number>> {
+    return this.call("add_clue", hunt_id, question, answer, points, is_required, difficulty);
+  }
+
+  async add_clues({
+    hunt_id,
+    clues,
+  }: {
+    hunt_id: bigint;
+    clues: BatchClueInput[];
+  }): Promise<AssembledTransaction<number[]>> {
+    return this.call("add_clues", hunt_id, clues);
+  }
 
 export interface HuntCancelledEvent {
   hunt_id: u64;

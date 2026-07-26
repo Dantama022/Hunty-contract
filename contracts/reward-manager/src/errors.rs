@@ -30,6 +30,8 @@ pub enum RewardErrorCode {
 
     /// hunt_id does not exist in HuntyCore (validated via cross-contract call).
     HuntNotFound = 13,
+    /// Distribution record not found for this hunt/player pair.
+    DistributionNotFound = 24,
 
     /// A recursive distribution attempt was detected during an external XLM or NFT call.
     ReentrancyDetected = 14,
