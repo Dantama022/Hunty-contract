@@ -79,18 +79,6 @@ pub struct DistributionRecord {
     pub nft_id: Option<u64>,
 }
 
-/// Outcome recorded when an admin manually resolves a distribution that
-/// could not complete automatically (e.g. XLM was sent but the NFT mint
-/// failed). This is bookkeeping only and does not move funds.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ResolutionStatus {
-    /// The distribution is considered fully completed.
-    Completed,
-    /// The distribution is considered refunded / rolled back.
-    Refunded,
-}
-
 /// Configuration for a reward pool, set at creation time.
 ///
 /// `time_based_tiers` is an optional list of (max_elapsed_seconds, xlm_amount)
@@ -118,6 +106,16 @@ pub struct RewardPoolConfig {
     /// When `true`, `distribute_rewards` and other distribution functions
     /// will reject calls with `RewardErrorCode::PoolFrozen`.
     pub frozen: bool,
+    /// Token address for the reward pool (e.g., XLM, USDC, or other SAC tokens).
+    pub token_address: Address,
+    /// Optional NFT contract address for NFT-only or mixed reward pools.
+    pub nft_contract: Option<Address>,
+    /// Target funding amount for progress tracking (0 = disabled).
+    pub target_amount: i128,
+    /// Minimum seconds between distributions (0 = disabled).
+    pub min_distribution_interval_secs: u64,
+    /// Distribution mode (Fixed or Proportional).
+    pub distribution_mode: DistributionMode,
 }
 
 /// Full status of a reward pool, returned by get_reward_pool().
@@ -218,12 +216,21 @@ pub struct PoolAuditEntry {
     pub amount: Option<i128>,
 }
 
-/// Resolution status for failed distributions.
+/// Entry for batch distribution calls.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ResolutionStatus {
-    /// Distribution completed successfully.
-    Completed,
-    /// Distribution refunded to pool.
-    Refunded,
+pub struct BatchDistributionEntry {
+    pub hunt_id: u64,
+    pub player_address: Address,
+    pub reward_config: RewardConfig,
+}
+
+/// Record of a completed distribution for a specific pool.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PoolDistribution {
+    pub player: Address,
+    pub xlm_amount: i128,
+    pub nft_id: Option<u64>,
+    pub timestamp: u64,
 }

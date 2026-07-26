@@ -30,8 +30,6 @@ pub enum RewardErrorCode {
 
     /// hunt_id does not exist in HuntyCore (validated via cross-contract call).
     HuntNotFound = 13,
-    /// Distribution record not found for this hunt/player pair.
-    DistributionNotFound = 24,
 
     /// A recursive distribution attempt was detected during an external XLM or NFT call.
     ReentrancyDetected = 14,
@@ -79,4 +77,16 @@ pub enum RewardErrorCode {
 
     /// Pool is frozen and distributions have been temporarily disabled.
     PoolFrozen = 28,
+
+    /// Distribution rate limit not yet elapsed (cooldown period active).
+    DistributionRateLimited = 29,
+
+    /// Batch size exceeds maximum allowed limit.
+    BatchTooLarge = 30,
+
+    /// Invalid score value provided.
+    InvalidScore = 31,
+
+    /// Token contract validation failed.
+    InvalidTokenContract = 32,
 }
