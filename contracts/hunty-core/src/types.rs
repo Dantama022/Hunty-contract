@@ -463,6 +463,31 @@ pub struct PlayerRegisteredEvent {
     pub player: Address,
 }
 
+/// Emitted when a hunt creator generates or updates the invite code for a private hunt.
+/// The invite code itself is never emitted or stored — only its hash.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InviteCodeGeneratedEvent {
+    pub hunt_id: u64,
+    pub creator: Address,
+}
+
+/// Emitted when a hunt creator clears the invite code, pausing new registrations.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InviteCodeRevokedEvent {
+    pub hunt_id: u64,
+    pub creator: Address,
+}
+
+/// Emitted when a player successfully registers using an invite code.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PlayerRegisteredWithInviteEvent {
+    pub hunt_id: u64,
+    pub player: Address,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct PlayerBannedEvent {

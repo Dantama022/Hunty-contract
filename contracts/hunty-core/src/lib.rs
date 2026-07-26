@@ -1748,6 +1748,11 @@ impl HuntyCore {
             return Err(HuntErrorCode::InvalidHuntStatus);
         }
 
+        // Reject public registration for private hunts
+        if hunt.is_private {
+            return Err(HuntErrorCode::HuntIsPrivate);
+        }
+
         let current_time = env.ledger().timestamp();
 
         // Cache read: cheaper than loading full Hunt from persistent storage
@@ -1757,6 +1762,258 @@ impl HuntyCore {
         if hunt.registration_deadline != 0 && current_time >= hunt.registration_deadline {
             return Err(HuntErrorCode::RegistrationClosed);
         }
+
+        let progress = PlayerProgress::new(&env, player.clone(), hunt_id, current_time);
+        Storage::save_player_progress(&env, &progress);
+
+        let event = PlayerRegisteredEvent {
+            hunt_id,
+            player: player.clone(),
+        };
+        env.events()
+            .publish((Symbol::new(&env, "PlayerRegistered"), hunt_id), event);
+
+        Ok(())
+    }
+
+    /// Generates or updates the invite code for a private hunt.
+    ///
+    /// The invite code is hashed with SHA256 (using hunt_id as salt) and only the hash
+    /// is stored on-chain. The plain-text code is never persisted or emitted in events.
+    /// Calling this function overwrites any previously set invite code.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `hunt_id` - The hunt to generate an invite code for
+    /// * `creator` - The hunt creator (must authorize the call)
+    /// * `invite_code` - The plain-text invite code to hash and store
+    ///
+    /// # Returns
+    /// `Ok(())` on success
+    ///
+    /// # Errors
+    /// * `HuntNotFound` - Hunt does not exist
+    /// * `Unauthorized` - Caller is not the hunt creator
+    /// * `InvalidHuntStatus` - Hunt is not in Draft status
+    pub fn generate_invite_code(
+        env: Env,
+        hunt_id: u64,
+        creator: Address,
+        invite_code: String,
+    ) -> Result<(), HuntErrorCode> {
+        creator.require_auth();
+
+        let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+
+        if hunt.creator != creator {
+            return Err(HuntErrorCode::Unauthorized);
+        }
+
+        if hunt.status != HuntStatus::Draft {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+
+        // Hash the invite code with hunt_id as salt to prevent rainbow-table attacks.
+        // Use the same buffer-based approach as normalize_and_hash_answer for consistency.
+        let invite_code_bytes = invite_code.as_bytes();
+        let code_len = invite_code_bytes.len() as usize;
+        if code_len == 0 {
+            return Err(HuntErrorCode::InvalidInviteCode);
+        }
+        let mut buf = [0u8; 264]; // 8 (hunt_id) + 256 (max invite code)
+        buf[..8].copy_from_slice(&hunt_id.to_be_bytes());
+        invite_code_bytes.copy_into_slice(&mut buf[8..8 + code_len]);
+        let salted = Bytes::from_slice(&env, &buf[..8 + code_len]);
+        let hash = env.crypto().sha256(&salted);
+        let hash_bytes: BytesN<32> = hash.to_bytes();
+
+        hunt.invite_code_hash = Some(hash_bytes);
+        Storage::save_hunt(&env, &hunt);
+
+        let event = InviteCodeGeneratedEvent {
+            hunt_id,
+            creator: creator.clone(),
+        };
+        env.events()
+            .publish((Symbol::new(&env, "InviteCodeGenerated"), hunt_id), event);
+
+        Ok(())
+    }
+
+    /// Sets whether a hunt is private (invite-only).
+    ///
+    /// Only the hunt creator can call this, and only while the hunt is in Draft status.
+    /// When making a hunt private, an invite code must already be configured via
+    /// `generate_invite_code` before the hunt can be activated.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `hunt_id` - The hunt to update privacy for
+    /// * `creator` - The hunt creator (must authorize the call)
+    /// * `is_private` - Whether the hunt should be invite-only
+    ///
+    /// # Returns
+    /// `Ok(())` on success
+    ///
+    /// # Errors
+    /// * `HuntNotFound` - Hunt does not exist
+    /// * `Unauthorized` - Caller is not the hunt creator
+    /// * `InvalidHuntStatus` - Hunt is not in Draft status
+    pub fn set_hunt_privacy(
+        env: Env,
+        hunt_id: u64,
+        creator: Address,
+        is_private: bool,
+    ) -> Result<(), HuntErrorCode> {
+        creator.require_auth();
+
+        let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+
+        if hunt.creator != creator {
+            return Err(HuntErrorCode::Unauthorized);
+        }
+
+        if hunt.status != HuntStatus::Draft {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+
+        hunt.is_private = is_private;
+        Storage::save_hunt(&env, &hunt);
+
+        // Emit a status-changed event so off-chain indexers can track privacy toggles
+        let current_time = env.ledger().timestamp();
+        let old_status = if is_private {
+            HuntStatus::Draft
+        } else {
+            HuntStatus::Draft
+        };
+        Self::emit_hunt_status_changed(
+            &env,
+            hunt_id,
+            old_status,
+            hunt.status.clone(),
+            current_time,
+        );
+
+        Ok(())
+    }
+
+    /// Clears the invite code for a private hunt, effectively pausing new registrations.
+    /// The hunt creator can generate a new code later via `generate_invite_code`.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `hunt_id` - The hunt to revoke the invite code for
+    /// * `creator` - The hunt creator (must authorize the call)
+    ///
+    /// # Returns
+    /// `Ok(())` on success
+    ///
+    /// # Errors
+    /// * `HuntNotFound` - Hunt does not exist
+    /// * `Unauthorized` - Caller is not the hunt creator
+    /// * `InvalidHuntStatus` - Hunt is not in Draft status
+    pub fn revoke_invite_code(
+        env: Env,
+        hunt_id: u64,
+        creator: Address,
+    ) -> Result<(), HuntErrorCode> {
+        creator.require_auth();
+
+        let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+
+        if hunt.creator != creator {
+            return Err(HuntErrorCode::Unauthorized);
+        }
+
+        if hunt.status != HuntStatus::Draft {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+
+        hunt.invite_code_hash = None;
+        Storage::save_hunt(&env, &hunt);
+
+        let event = InviteCodeRevokedEvent {
+            hunt_id,
+            creator: creator.clone(),
+        };
+        env.events()
+            .publish((Symbol::new(&env, "InviteCodeRevoked"), hunt_id), event);
+
+        Ok(())
+    }
+
+    /// Registers a player for a private hunt using a valid invite code.
+    ///
+    /// The provided invite code is hashed (with hunt_id as salt) and compared against
+    /// the stored `invite_code_hash`. If they match, the player is registered.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `hunt_id` - The private hunt to register for
+    /// * `player` - The address of the player (must authorize the call via require_auth)
+    /// * `invite_code` - The plain-text invite code to validate
+    ///
+    /// # Returns
+    /// `Ok(())` on success
+    ///
+    /// # Errors
+    /// * `HuntNotFound` - Hunt does not exist
+    /// * `InvalidHuntStatus` - Hunt is not in Active status
+    /// * `HuntIsPrivate` - Hunt is not private (use `register_player` instead)
+    /// * `InviteNotConfigured` - Hunt is private but has no invite code set
+    /// * `InvalidInviteCode` - The provided invite code does not match
+    /// * `DuplicateRegistration` - Player is already registered for this hunt
+    pub fn register_with_invite(
+        env: Env,
+        hunt_id: u64,
+        player: Address,
+        invite_code: String,
+    ) -> Result<(), HuntErrorCode> {
+        player.require_auth();
+
+        if Storage::is_pause_registrations(&env) {
+            return Err(HuntErrorCode::RegistrationsPaused);
+        }
+
+        let hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+
+        if hunt.status != HuntStatus::Active {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+
+        // Ensure the hunt is private and has an invite code configured.
+        // If hunt is not private, tell the caller to use register_player instead.
+        if !hunt.is_private {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+
+        let stored_hash = hunt
+            .invite_code_hash
+            .ok_or(HuntErrorCode::InviteNotConfigured)?;
+
+        // Hash the provided invite code with the same salt (hunt_id) and compare.
+        // Use the same buffer-based approach as generate_invite_code for consistency.
+        let invite_code_bytes = invite_code.as_bytes();
+        let code_len = invite_code_bytes.len() as usize;
+        if code_len == 0 {
+            return Err(HuntErrorCode::InvalidInviteCode);
+        }
+        let mut buf = [0u8; 264]; // 8 (hunt_id) + 256 (max invite code)
+        buf[..8].copy_from_slice(&hunt_id.to_be_bytes());
+        invite_code_bytes.copy_into_slice(&mut buf[8..8 + code_len]);
+        let salted = Bytes::from_slice(&env, &buf[..8 + code_len]);
+        let computed_hash = env.crypto().sha256(&salted);
+        let computed_hash_bytes: BytesN<32> = computed_hash.to_bytes();
+
+        if computed_hash_bytes != stored_hash {
+            return Err(HuntErrorCode::InvalidInviteCode);
+        }
+
+        let current_time = env.ledger().timestamp();
+
+        // Cache read: cheaper than loading full Hunt from persistent storage
+        let _cache = Self::validate_hunt_active_cached(&env, hunt_id)?;
 
         if Storage::get_player_progress(&env, hunt_id, &player).is_some() {
             return Err(HuntErrorCode::DuplicateRegistration);
@@ -1772,12 +2029,12 @@ impl HuntyCore {
         let progress = PlayerProgress::new(&env, player.clone(), hunt_id, current_time);
         Storage::save_player_progress(&env, &progress);
 
-        let event = PlayerRegisteredEvent {
+        let event = PlayerRegisteredWithInviteEvent {
             hunt_id,
             player: player.clone(),
         };
         env.events()
-            .publish((Symbol::new(&env, "PlayerRegistered"), hunt_id), event);
+            .publish((Symbol::new(&env, "PlayerRegisteredWithInvite"), hunt_id), event);
 
         Ok(())
     }
