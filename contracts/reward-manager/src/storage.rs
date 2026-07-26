@@ -39,6 +39,13 @@ impl Storage {
     const POOL_CFG_KEY: soroban_sdk::Symbol = symbol_short!("PCFG");
     const POOL_DEP_KEY: soroban_sdk::Symbol = symbol_short!("PDEP");
     const POOL_DST_KEY: soroban_sdk::Symbol = symbol_short!("PDST");
+    const HUNTY_CORE_KEY: soroban_sdk::Symbol = symbol_short!("HCORE");
+    const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ACT");
+    const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 1000;
+    const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("AL");
+    const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUS");
+    const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("ELOG");
+    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
     const TOTAL_XLM_DST_KEY: soroban_sdk::Symbol = symbol_short!("TXDST");
     const HUNTY_CORE_KEY: soroban_sdk::Symbol = symbol_short!("HCORE");
     const IN_DISTRIBUTION_KEY: soroban_sdk::Symbol = symbol_short!("IN_DIST");

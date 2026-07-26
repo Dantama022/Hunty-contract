@@ -14,6 +14,9 @@ impl Storage {
     const OWNER_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ONFC");
     const MAX_SUPPLY_KEY: soroban_sdk::Symbol = symbol_short!("MAXS");
     const INITIALIZED_KEY: soroban_sdk::Symbol = symbol_short!("INIT");
+    const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMN");
+    const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MNTR");
+    const REWARD_MGR_KEY: soroban_sdk::Symbol = symbol_short!("RWMG");
     const COLLECTION_METADATA_KEY: soroban_sdk::Symbol = symbol_short!("COLL");
     const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMIN");
     const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MNTR");
@@ -331,6 +334,8 @@ impl Storage {
             .set(&Self::INITIALIZED_KEY, &true);
     }
 
+    /// Adds an NFT ID to the owner's index.
+    /// Each entry is stored at its own key so no single entry grows unboundedly.
     pub fn save_collection_metadata(env: &Env, metadata: &CollectionMetadata) {
         env.storage()
             .instance()

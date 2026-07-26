@@ -616,6 +616,7 @@ impl HuntyCore {
             question,
             points,
             is_required,
+            difficulty,
             difficulty: difficulty.unwrap_or(1),
             weight,
         };
