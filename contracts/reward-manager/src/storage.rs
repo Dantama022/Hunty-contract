@@ -1,8 +1,6 @@
 use soroban_sdk::{symbol_short, Address, Env};
 
-use crate::types::{
-    DistributionProof, DistributionRecord, PoolAuditEntry, ResolutionStatus, RewardPoolConfig,
-};
+use crate::types::{DistributionRecord, PoolAuditEntry, ResolutionStatus, RewardPoolConfig};
 pub struct Storage;
 
 impl Storage {
@@ -10,6 +8,16 @@ impl Storage {
     const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMI");
     const XLM_TOKEN_KEY: soroban_sdk::Symbol = symbol_short!("X");
     const NFT_CONTRACT_KEY: soroban_sdk::Symbol = symbol_short!("NFTA");
+    // Audit log
+    const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ACNT");
+    const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("ALOG");
+    /// Ring-buffer capacity for the per-pool audit log.
+    const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 50;
+    // Pause / emergency state
+    const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSED");
+    const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
+    // Pending NFT mints (for retry)
+    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
     // Daily spending caps
     const DAILY_POOL_CAP_KEY: soroban_sdk::Symbol = symbol_short!("DPC");
     const DAILY_GLOBAL_CAP_KEY: soroban_sdk::Symbol = symbol_short!("DGR");
@@ -166,10 +174,7 @@ impl Storage {
         env.storage().persistent().get(&key)
     }
 
-    fn dist_resolve_key(
-        hunt_id: u64,
-        player: &Address,
-    ) -> (soroban_sdk::Symbol, u64, Address) {
+    fn dist_resolve_key(hunt_id: u64, player: &Address) -> (soroban_sdk::Symbol, u64, Address) {
         (Self::DIST_RESOLVE_KEY, hunt_id, player.clone())
     }
 
@@ -293,11 +298,16 @@ impl Storage {
     }
 
     pub fn set_daily_global_cap(env: &Env, cap: i128) {
-        env.storage().persistent().set(&Self::DAILY_GLOBAL_CAP_KEY, &cap);
+        env.storage()
+            .persistent()
+            .set(&Self::DAILY_GLOBAL_CAP_KEY, &cap);
     }
 
     pub fn get_daily_global_cap(env: &Env) -> i128 {
-        env.storage().persistent().get(&Self::DAILY_GLOBAL_CAP_KEY).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get(&Self::DAILY_GLOBAL_CAP_KEY)
+            .unwrap_or(0)
     }
 
     // Daily distribution tracking
@@ -330,7 +340,10 @@ impl Storage {
     }
 
     pub fn has_authorized_contracts(env: &Env) -> bool {
-        env.storage().instance().get(&Self::HAS_AUTH_KEY).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&Self::HAS_AUTH_KEY)
+            .unwrap_or(false)
     }
 
     pub fn add_authorized_contract(env: &Env, contract: &Address) {
@@ -391,12 +404,14 @@ impl Storage {
     pub fn append_audit_entry(env: &Env, hunt_id: u64, entry: PoolAuditEntry) {
         let count_key = (Self::AUDIT_COUNT_KEY, hunt_id);
         let current_count: u64 = env.storage().persistent().get(&count_key).unwrap_or(0);
-        
+
         let index = current_count % Self::MAX_AUDIT_ENTRIES_PER_POOL;
         let log_key = (Self::AUDIT_LOG_KEY, hunt_id, index);
-        
+
         env.storage().persistent().set(&log_key, &entry);
-        env.storage().persistent().set(&count_key, &(current_count + 1));
+        env.storage()
+            .persistent()
+            .set(&count_key, &(current_count + 1));
     }
 
     pub fn get_pool_audit_count(env: &Env, hunt_id: u64) -> u64 {
@@ -405,7 +420,11 @@ impl Storage {
     }
 
     pub fn get_pool_audit_entry(env: &Env, hunt_id: u64, index: u64) -> Option<PoolAuditEntry> {
-        let log_key = (Self::AUDIT_LOG_KEY, hunt_id, index % Self::MAX_AUDIT_ENTRIES_PER_POOL);
+        let log_key = (
+            Self::AUDIT_LOG_KEY,
+            hunt_id,
+            index % Self::MAX_AUDIT_ENTRIES_PER_POOL,
+        );
         env.storage().persistent().get(&log_key)
     }
 
@@ -471,10 +490,7 @@ impl Storage {
         env.storage().persistent().remove(&key);
     }
 
-    fn pending_nft_key(
-        hunt_id: u64,
-        player: &Address,
-    ) -> (soroban_sdk::Symbol, u64, Address) {
+    fn pending_nft_key(hunt_id: u64, player: &Address) -> (soroban_sdk::Symbol, u64, Address) {
         (Self::PENDING_NFT_KEY, hunt_id, player.clone())
     }
 

@@ -1,8 +1,7 @@
 use soroban_sdk::{contracttype, Address, BytesN, Vec};
 
 pub use reward_interface::{
-    resolve_tier_amount, tiers_are_strictly_ascending, RewardConfig, TierError,
-    TimeBasedRewardTier,
+    resolve_tier_amount, tiers_are_strictly_ascending, RewardConfig, TierError, TimeBasedRewardTier,
 };
 
 /// How XLM rewards are calculated from the pool at distribution time.
@@ -80,6 +79,18 @@ pub struct DistributionRecord {
     pub nft_id: Option<u64>,
 }
 
+/// Outcome recorded when an admin manually resolves a distribution that
+/// could not complete automatically (e.g. XLM was sent but the NFT mint
+/// failed). This is bookkeeping only and does not move funds.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    /// The distribution is considered fully completed.
+    Completed,
+    /// The distribution is considered refunded / rolled back.
+    Refunded,
+}
+
 /// Configuration for a reward pool, set at creation time.
 ///
 /// `time_based_tiers` is an optional list of (max_elapsed_seconds, xlm_amount)
@@ -103,14 +114,10 @@ pub struct RewardPoolConfig {
     /// the appropriate tier's `xlm_amount` is selected at distribution time
     /// based on the player's (completion_time - registration_time) elapsed.
     pub time_based_tiers: Vec<TimeBasedRewardTier>,
-    /// Target funding amount for the pool (stroops). 0 means no target;
-    /// funded events will report 0% progress.
-    pub target_amount: i128,
-    /// Minimum seconds between distributions from this pool. 0 disables
-    /// per-pool distribution rate limiting.
-    pub min_distribution_interval_secs: u64,
-    /// Fixed (caller-supplied amount) or proportional-to-score distribution.
-    pub distribution_mode: DistributionMode,
+    /// Whether distributions from this pool are temporarily frozen.
+    /// When `true`, `distribute_rewards` and other distribution functions
+    /// will reject calls with `RewardErrorCode::PoolFrozen`.
+    pub frozen: bool,
 }
 
 /// Full status of a reward pool, returned by get_reward_pool().
@@ -127,6 +134,8 @@ pub struct RewardPoolStatus {
     pub creator: Address,
     /// Minimum XLM per distribution (0 = no minimum).
     pub min_distribution_amount: i128,
+    /// Whether distributions from this pool are temporarily frozen.
+    pub frozen: bool,
 }
 
 /// Pending NFT mint that failed and can be retried by the admin.
@@ -165,6 +174,10 @@ pub enum PoolOperation {
     Fund,
     Distribute,
     Withdraw,
+    Freeze,
+    Unfreeze,
+    /// Unused balance was migrated out to (or into) another hunt's pool.
+    Migrate,
 }
 
 /// A single entry in the pool audit log.
