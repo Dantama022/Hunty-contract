@@ -885,6 +885,31 @@ impl RewardManager {
         })
     }
 
+    /// Returns comprehensive statistics for a reward pool.
+    /// Returns None if no pool has been created for the given hunt_id.
+    pub fn get_pool_statistics(env: Env, hunt_id: u64) -> Option<RewardPoolStatistics> {
+        Storage::get_pool_config(&env, hunt_id)?;
+        let total_funded = Storage::get_pool_total_deposited(&env, hunt_id);
+        let total_distributed = Storage::get_pool_total_distributed(&env, hunt_id);
+        let distribution_count = Storage::get_pool_distribution_count(&env, hunt_id);
+        let last_distribution_timestamp =
+            Storage::get_pool_last_distribution_timestamp(&env, hunt_id);
+
+        let avg_distribution = if distribution_count > 0 && total_distributed > 0 {
+            total_distributed / distribution_count as i128
+        } else {
+            0
+        };
+
+        Some(RewardPoolStatistics {
+            total_funded,
+            total_distributed,
+            distribution_count,
+            avg_distribution,
+            last_distribution_timestamp,
+        })
+    }
+
     /// Validates whether a pool can cover a given distribution amount.
     ///
     /// Checks that:

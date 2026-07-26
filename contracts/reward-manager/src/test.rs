@@ -2259,6 +2259,134 @@ mod test {
         assert_eq!(get_balance(&env, &token_address, &player), 0);
     }
 
+    // ========== get_pool_statistics ==========
+
+    #[test]
+    fn test_get_pool_statistics_returns_none_for_unknown_pool() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, _, _) = setup(&env);
+
+        env.as_contract(&contract_id, || {
+            assert!(RewardManager::get_pool_statistics(env.clone(), 99).is_none());
+        });
+    }
+
+    #[test]
+    fn test_get_pool_statistics_after_creation() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, _, _) = setup(&env);
+        let creator = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+
+            let stats = RewardManager::get_pool_statistics(env.clone(), 1).unwrap();
+            assert_eq!(stats.total_funded, 0);
+            assert_eq!(stats.total_distributed, 0);
+            assert_eq!(stats.distribution_count, 0);
+            assert_eq!(stats.avg_distribution, 0);
+            assert_eq!(stats.last_distribution_timestamp, 0);
+        });
+    }
+
+    #[test]
+    fn test_get_pool_statistics_after_funding() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 80_000_000).unwrap();
+
+            let stats = RewardManager::get_pool_statistics(env.clone(), 1).unwrap();
+            assert_eq!(stats.total_funded, 80_000_000);
+            assert_eq!(stats.total_distributed, 0);
+            assert_eq!(stats.distribution_count, 0);
+            assert_eq!(stats.avg_distribution, 0);
+            assert_eq!(stats.last_distribution_timestamp, 0);
+        });
+    }
+
+    #[test]
+    fn test_get_pool_statistics_after_distributions() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 100_000_000).unwrap();
+
+            // Distribute to player1
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player1.clone(),
+                xlm_only_config(&env, 30_000_000),
+            )
+            .unwrap();
+
+            let stats = RewardManager::get_pool_statistics(env.clone(), 1).unwrap();
+            assert_eq!(stats.total_funded, 100_000_000);
+            assert_eq!(stats.total_distributed, 30_000_000);
+            assert_eq!(stats.distribution_count, 1);
+            assert_eq!(stats.avg_distribution, 30_000_000);
+            assert!(stats.last_distribution_timestamp > 0);
+
+            let ts_after_first = stats.last_distribution_timestamp;
+
+            // Distribute to player2
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player2.clone(),
+                xlm_only_config(&env, 20_000_000),
+            )
+            .unwrap();
+
+            let stats = RewardManager::get_pool_statistics(env.clone(), 1).unwrap();
+            assert_eq!(stats.total_funded, 100_000_000);
+            assert_eq!(stats.total_distributed, 50_000_000);
+            assert_eq!(stats.distribution_count, 2);
+            assert_eq!(stats.avg_distribution, 25_000_000);
+            assert!(stats.last_distribution_timestamp >= ts_after_first);
+        });
+    }
+
+    #[test]
+    fn test_get_pool_statistics_zero_distributions_avg() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 50_000_000).unwrap();
+
+            let stats = RewardManager::get_pool_statistics(env.clone(), 1).unwrap();
+            // No distributions yet: avg should be 0, not a division error
+            assert_eq!(stats.distribution_count, 0);
+            assert_eq!(stats.avg_distribution, 0);
+        });
+    }
+
     #[test]
     fn test_admin_removes_authorized_contract() {
         let env = Env::default();
