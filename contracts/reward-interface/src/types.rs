@@ -14,12 +14,6 @@ pub struct RewardConfig {
     pub nft_tier: u32,
 }
 
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RewardPoolConfig {
-    pub time_based_tiers: Vec<TimeBasedRewardTier>,
-}
-
 impl RewardConfig {
     pub fn has_xlm(&self) -> bool {
         self.xlm_amount.map(|a| a > 0).unwrap_or(false)
@@ -48,6 +42,29 @@ pub struct RewardPoolConfig {
     /// Optional time-based reward tiers. When empty, the per-winner amount
     /// is computed from `xlm_pool / max_winners`.
     pub time_based_tiers: Vec<TimeBasedRewardTier>,
+    /// Whether distributions from this pool are temporarily frozen.
+    pub frozen: bool,
+    /// Token address for the reward pool (e.g., XLM, USDC, or other SAC tokens).
+    pub token_address: Address,
+    /// Optional NFT contract address for NFT-only or mixed reward pools.
+    pub nft_contract: Option<Address>,
+    /// Target funding amount for progress tracking (0 = disabled).
+    pub target_amount: i128,
+    /// Minimum seconds between distributions (0 = disabled).
+    pub min_distribution_interval_secs: u64,
+    /// Distribution mode (Fixed or Proportional).
+    pub distribution_mode: DistributionMode,
+}
+
+/// How rewards are calculated from the pool at distribution time.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DistributionMode {
+    /// Fixed amount supplied by the caller.
+    Fixed = 0,
+    /// Share of the pool based on player score.
+    Proportional = 1,
 }
 
 /// One tier of a time-based reward schedule configured on a reward pool.

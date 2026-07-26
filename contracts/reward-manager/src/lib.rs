@@ -10,11 +10,10 @@ use crate::nft_handler::NftHandler;
 use crate::storage::Storage;
 use crate::token_handler::TokenHandler;
 pub use crate::types::{
-    resolve_tier_amount, tiers_are_strictly_ascending, DistributionRecord, DistributionStatus,
-    PendingNftMint, PoolAuditEntry, PoolOperation, ResolutionStatus, RewardConfig,
-    RewardPoolConfig, RewardPoolStatus, SemVer, TierError, TimeBasedRewardTier, ValidationResult,
+    resolve_tier_amount, tiers_are_strictly_ascending, BatchDistributionEntry, DistributionMode, DistributionProof, DistributionRecord, DistributionStatus,
+    PendingNftMint, PoolAuditEntry, PoolDistribution, PoolOperation, ResolutionStatus, RewardConfig,
+    RewardPoolConfig, RewardPoolStatistics, RewardPoolStatus, SemVer, TierError, TimeBasedRewardTier, ValidationResult,
 };
-pub use crate::types::{PendingNftMint, PoolAuditEntry, PoolOperation};
 use crate::xlm_handler::XlmHandler;
 
 // Funding validation constants
@@ -319,29 +318,40 @@ impl RewardManager {
     /// Must be called before `fund_reward_pool`. Only the creator is authorized
     /// to fund the pool after creation. The token contract must be SAC-compatible.
     ///
+    /// For NFT-only pools (pools that distribute only NFTs without any token component),
+    /// set `min_distribution_amount` to 0 and provide an `nft_contract` address.
+    ///
     /// # Arguments
     /// * `creator` - The hunt creator who will own and fund the pool
     /// * `hunt_id` - The hunt this pool is for
     /// * `token_address` - Address of the SAC-compatible token contract (e.g., XLM, USDC)
-    /// * `min_distribution_amount` - Minimum token amount per distribution (0 = no minimum)
+    /// * `min_distribution_amount` - Minimum token amount per distribution (0 for NFT-only pools)
+    /// * `nft_contract` - Optional NFT contract address for NFT rewards
     ///
     /// # Errors
     /// * `PoolAlreadyExists` - A pool already exists for this hunt_id
     /// * `InvalidAmount` - min_distribution_amount is negative
     /// * `InvalidTokenContract` - token_address is not a valid SAC-compatible token
+    /// * `InvalidConfig` - min_distribution_amount is 0 but no NFT contract provided
     /// * `HuntNotFound` - hunt_id does not exist in HuntyCore (only when `set_hunty_core` has been called)
-    pub fn create_reward_pool(
+    pub fn create_reward_pool_with_nft(
         env: Env,
         creator: Address,
         hunt_id: u64,
         token_address: Address,
         min_distribution_amount: i128,
+        nft_contract: Option<Address>,
     ) -> Result<(), RewardErrorCode> {
         #[cfg(not(test))]
         creator.require_auth();
 
         if min_distribution_amount < 0 {
             return Err(RewardErrorCode::InvalidAmount);
+        }
+
+        // Validation: For NFT-only pools (zero XLM), an NFT contract must be set
+        if min_distribution_amount == 0 && nft_contract.is_none() {
+            return Err(RewardErrorCode::InvalidConfig);
         }
 
         if Storage::get_pool_config(&env, hunt_id).is_some() {
@@ -377,6 +387,11 @@ impl RewardManager {
             min_distribution_amount,
             time_based_tiers: Vec::new(&env),
             frozen: false,
+            token_address: token_address.clone(),
+            nft_contract: nft_contract.clone(),
+            target_amount: 0,
+            min_distribution_interval_secs: 0,
+            distribution_mode: DistributionMode::Fixed,
         };
         Storage::set_pool_config(&env, hunt_id, &config);
 
@@ -398,6 +413,39 @@ impl RewardManager {
         Storage::append_audit_entry(&env, hunt_id, audit_entry);
 
         Ok(())
+    }
+
+    /// Creates a reward pool for a specific hunt with a specified token.
+    ///
+    /// Must be called before `fund_reward_pool`. Only the creator is authorized
+    /// to fund the pool after creation. The token contract must be SAC-compatible.
+    ///
+    /// # Arguments
+    /// * `creator` - The hunt creator who will own and fund the pool
+    /// * `hunt_id` - The hunt this pool is for
+    /// * `token_address` - Address of the SAC-compatible token contract (e.g., XLM, USDC)
+    /// * `min_distribution_amount` - Minimum token amount per distribution (0 = no minimum)
+    ///
+    /// # Errors
+    /// * `PoolAlreadyExists` - A pool already exists for this hunt_id
+    /// * `InvalidAmount` - min_distribution_amount is negative
+    /// * `InvalidTokenContract` - token_address is not a valid SAC-compatible token
+    /// * `HuntNotFound` - hunt_id does not exist in HuntyCore (only when `set_hunty_core` has been called)
+    pub fn create_reward_pool(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        token_address: Address,
+        min_distribution_amount: i128,
+    ) -> Result<(), RewardErrorCode> {
+        Self::create_reward_pool_with_nft(
+            env,
+            creator,
+            hunt_id,
+            token_address,
+            min_distribution_amount,
+            None,
+        )
     }
 
     /// Updates the `min_distribution_amount` for an existing reward pool.
@@ -562,6 +610,38 @@ impl RewardManager {
             (symbol_short!("PL_TIERS"), hunt_id),
             (creator.clone(), tiers_len),
         );
+
+        Ok(())
+    }
+
+    /// Sets or updates the NFT contract address for an existing reward pool.
+    /// This allows pools to distribute NFTs alongside or instead of tokens.
+    ///
+    /// # Arguments
+    /// * `creator` - The pool creator (must match the stored creator)
+    /// * `hunt_id` - The hunt whose pool config to update
+    /// * `nft_contract` - NFT contract address (or None to disable NFT rewards)
+    ///
+    /// # Errors
+    /// * `PoolNotFound` - No pool exists for this hunt_id
+    /// * `Unauthorized` - Caller is not the pool creator
+    pub fn set_pool_nft_contract(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        nft_contract: Option<Address>,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        config.nft_contract = nft_contract;
+        Storage::set_pool_config(&env, hunt_id, &config);
 
         Ok(())
     }
@@ -1233,7 +1313,7 @@ impl RewardManager {
                 }
             }
 
-            XlmHandler::distribute_xlm(&env, &xlm_token, &contract_addr, &player_address, amount);
+            XlmHandler::distribute_xlm(&env, token_address, &contract_addr, &player_address, amount);
             xlm_amount = amount;
             Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
 
