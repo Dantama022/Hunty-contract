@@ -3337,6 +3337,59 @@ mod test {
     }
 
     #[test]
+    fn test_max_players_limit_and_remaining_slots() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+        env.mock_all_auths();
+
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+        let player3 = Address::generate(&env);
+        let question = String::from_str(&env, "Valid question");
+        let answer = String::from_str(&env, "a");
+
+        with_core_contract(&env, |env, _cid| {
+            let hunt_id = HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Active Hunt"),
+                String::from_str(env, "Desc"),
+                None,
+                None,
+                0,
+                None,
+            )
+            .unwrap();
+            HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, true, 1).unwrap();
+            
+            // Set max players limit to 2
+            HuntyCore::set_max_players(env.clone(), hunt_id, creator.clone(), 2).unwrap();
+
+            HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
+
+            // First get remaining slots: should be 2
+            let hunt = HuntyCore::get_hunt_info(env.clone(), hunt_id).unwrap();
+            assert_eq!(hunt.max_players, 2);
+            assert_eq!(hunt.remaining_slots, 2);
+
+            // Register first player
+            HuntyCore::register_player(env.clone(), hunt_id, player1.clone()).unwrap();
+            let hunt = HuntyCore::get_hunt_info(env.clone(), hunt_id).unwrap();
+            assert_eq!(hunt.remaining_slots, 1);
+
+            // Register second player
+            HuntyCore::register_player(env.clone(), hunt_id, player2.clone()).unwrap();
+            let hunt = HuntyCore::get_hunt_info(env.clone(), hunt_id).unwrap();
+            assert_eq!(hunt.remaining_slots, 0);
+
+            // Attempting to register third player should fail with HuntFull
+            let err = HuntyCore::register_player(env.clone(), hunt_id, player3.clone()).unwrap_err();
+            assert_eq!(err, HuntErrorCode::HuntFull);
+        });
+    }
+
+    #[test]
     fn test_blacklist_creator_blocks_hunt_creation_and_emits_event() {
         let env = Env::default();
         env.ledger().set_timestamp(1_700_000_000);
@@ -6253,6 +6306,8 @@ mod test {
             completed_count: 0,
             max_submissions_per_minute: 0,
             start_multiplier_bps: 20000,
+            max_players: 0,
+            remaining_slots: 0,
         };
 
         let clue = Clue {

@@ -1890,6 +1890,43 @@ mod test {
         });
     }
 
+    #[test]
+    fn test_refund_expired_pool() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            RewardManager::initialize(env.clone(), token_admin.clone(), token_address.clone())
+                .unwrap();
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 99, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 99, 60_000_000).unwrap();
+            
+            // Set pool expiration time to 1_700_000_000
+            RewardManager::set_pool_expiration(env.clone(), creator.clone(), 99, 1_700_000_000).unwrap();
+
+            // Check config has expiration_time
+            let cfg = RewardManager::get_reward_pool(env.clone(), 99).unwrap();
+            assert_eq!(cfg.expiration_time, 1_700_000_000);
+
+            // Attempt refund before expiration: should fail with InvalidConfig (since hunty_core is not set, we use fallback)
+            env.ledger().set_timestamp(1_600_000_000);
+            let result = RewardManager::refund_expired_pool(env.clone(), creator.clone(), 99);
+            assert_eq!(result, Err(RewardErrorCode::InvalidConfig));
+
+            // Set ledger time after expiration
+            env.ledger().set_timestamp(1_700_000_001);
+            RewardManager::refund_expired_pool(env.clone(), creator.clone(), 99).unwrap();
+
+            assert_eq!(RewardManager::get_pool_balance(env.clone(), 99), 0);
+        });
+
+        assert_eq!(get_balance(&env, &token_address, &creator), 100_000_000);
+    }
+
     // ========== admin_withdraw_unclaimed ==========
 
     #[test]

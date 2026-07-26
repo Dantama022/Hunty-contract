@@ -241,6 +241,15 @@ impl Storage {
                 _ => TtlPolicy::Default,
             };
             extend_ttl(env, &key, policy);
+
+            // Dynamically calculate remaining slots
+            let count_key = Self::player_count_key(hunt_id);
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+            hunt.remaining_slots = if hunt.max_players == 0 {
+                0
+            } else {
+                hunt.max_players.saturating_sub(count)
+            };
         }
         result
     }
@@ -879,6 +888,11 @@ impl Storage {
             }
         }
         addrs
+    }
+
+    pub fn get_player_count(env: &Env, hunt_id: u64) -> u32 {
+        let count_key = Self::player_count_key(hunt_id);
+        env.storage().persistent().get(&count_key).unwrap_or(0)
     }
 
     // ========== Hunt Counter Functions ==========

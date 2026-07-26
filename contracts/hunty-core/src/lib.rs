@@ -393,6 +393,34 @@ impl HuntyCore {
         Ok(())
     }
 
+    /// Sets the maximum players for a hunt. Only the hunt creator can set it, and only in Draft status.
+    pub fn set_max_players(
+        env: Env,
+        hunt_id: u64,
+        caller: Address,
+        max_players: u32,
+    ) -> Result<(), HuntErrorCode> {
+        caller.require_auth();
+
+        let mut hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
+        if hunt.creator != caller {
+            return Err(HuntErrorCode::Unauthorized);
+        }
+        if hunt.status != HuntStatus::Draft {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+
+        hunt.max_players = max_players;
+        Storage::save_hunt(&env, &hunt);
+        Ok(())
+    }
+
+    /// Exposes the end time of a hunt.
+    pub fn get_hunt_end_time(env: Env, hunt_id: u64) -> Result<u64, HuntErrorCode> {
+        let hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+        Ok(hunt.end_time)
+    }
+
     /// Adds a clue to a hunt. Only the hunt creator can add clues.
     /// Answers are hashed with SHA256 before storage; the hash is never exposed.
     ///
@@ -1732,6 +1760,13 @@ impl HuntyCore {
 
         if Storage::get_player_progress(&env, hunt_id, &player).is_some() {
             return Err(HuntErrorCode::DuplicateRegistration);
+        }
+
+        if hunt.max_players > 0 {
+            let count = Storage::get_player_count(&env, hunt_id);
+            if count >= hunt.max_players {
+                return Err(HuntErrorCode::HuntFull);
+            }
         }
 
         let progress = PlayerProgress::new(&env, player.clone(), hunt_id, current_time);
