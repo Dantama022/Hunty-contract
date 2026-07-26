@@ -1186,6 +1186,7 @@ impl HuntyCore {
     pub fn activate_hunt(env: Env, hunt_id: u64, caller: Address) -> Result<(), HuntErrorCode> {
         // Fast validation using instance cache
         let cache = Self::get_hunt_cache_or_load(&env, hunt_id)?;
+        caller.require_auth();
         if caller != cache.creator {
             return Err(HuntErrorCode::Unauthorized);
         }
@@ -1296,6 +1297,7 @@ impl HuntyCore {
 
     pub fn deactivate_hunt(env: Env, hunt_id: u64, caller: Address) -> Result<(), HuntErrorCode> {
         // Fast validation using instance cache
+        caller.require_auth();
         let cache = Self::get_hunt_cache_or_load(&env, hunt_id)?;
         if caller != cache.creator {
             return Err(HuntErrorCode::Unauthorized);
