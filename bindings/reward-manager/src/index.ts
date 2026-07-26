@@ -112,9 +112,14 @@ export interface RewardPoolConfig {
  */
 creator: string;
   /**
- * Minimum XLM amount per distribution. 0 means no minimum enforced.
+ * Minimum token amount per distribution. 0 means no minimum enforced.
  */
 min_distribution_amount: i128;
+  /**
+ * Address of the SAC-compatible token contract for this reward pool.
+ * Supports XLM and other Stellar Asset Contract tokens (e.g., USDC).
+ */
+token_address: string;
 }
 
 
