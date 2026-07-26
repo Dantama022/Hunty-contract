@@ -74,4 +74,7 @@ pub enum RewardErrorCode {
     /// Source and destination refer to the same hunt, or there is no balance
     /// to migrate.
     InvalidMigration = 27,
+
+    /// Pool is frozen and distributions have been temporarily disabled.
+    PoolFrozen = 28,
 }

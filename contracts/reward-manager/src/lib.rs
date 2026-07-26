@@ -143,6 +143,22 @@ pub struct DistributionResolvedEvent {
     pub resolution: ResolutionStatus,
 }
 
+/// Event emitted when a reward pool is frozen by its creator or the contract admin.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PoolFrozenEvent {
+    pub hunt_id: u64,
+    pub caller: Address,
+}
+
+/// Event emitted when a reward pool is unfrozen by its creator or the contract admin.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PoolUnfrozenEvent {
+    pub hunt_id: u64,
+    pub caller: Address,
+}
+
 /// Event emitted when emergency withdrawal is executed.
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -330,6 +346,7 @@ impl RewardManager {
             creator: creator.clone(),
             min_distribution_amount,
             time_based_tiers: Vec::new(&env),
+            frozen: false,
         };
         Storage::set_pool_config(&env, hunt_id, &config);
 
@@ -755,6 +772,7 @@ impl RewardManager {
             total_distributed,
             creator: config.creator,
             min_distribution_amount: config.min_distribution_amount,
+            frozen: config.frozen,
         })
     }
 
@@ -773,10 +791,15 @@ impl RewardManager {
         let pool_config = Storage::get_pool_config(&env, hunt_id);
 
         let is_valid = if let Some(ref config) = pool_config {
-            let meets_balance = required_amount > 0 && balance >= required_amount;
-            let meets_minimum = config.min_distribution_amount == 0
-                || required_amount >= config.min_distribution_amount;
-            meets_balance && meets_minimum
+            // A frozen pool cannot make distributions regardless of balance
+            if config.frozen {
+                false
+            } else {
+                let meets_balance = required_amount > 0 && balance >= required_amount;
+                let meets_minimum = config.min_distribution_amount == 0
+                    || required_amount >= config.min_distribution_amount;
+                meets_balance && meets_minimum
+            }
         } else {
             false
         };
@@ -786,6 +809,118 @@ impl RewardManager {
             balance,
             required: required_amount,
         }
+    }
+
+    /// Freezes a reward pool, preventing any further distributions.
+    ///
+    /// Can be called by either the pool creator or the contract admin.
+    /// Emits a `PoolFrozenEvent`.
+    ///
+    /// # Arguments
+    /// * `caller` - The address calling freeze (must be pool creator or admin)
+    /// * `hunt_id` - The hunt whose pool to freeze
+    ///
+    /// # Errors
+    /// * `PoolNotFound` - No pool exists for this hunt_id
+    /// * `Unauthorized` - Caller is neither the pool creator nor the contract admin
+    pub fn freeze_pool(
+        env: Env,
+        caller: Address,
+        hunt_id: u64,
+    ) -> Result<(), RewardErrorCode> {
+        caller.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        // Both the pool creator and the contract admin may freeze a pool.
+        let is_admin = Storage::get_admin(&env)
+            .map(|admin| admin == caller)
+            .unwrap_or(false);
+        if caller != config.creator && !is_admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        config.frozen = true;
+        Storage::set_pool_config(&env, hunt_id, &config);
+
+        env.events().publish(
+            (symbol_short!("POOL_FRZ"), hunt_id),
+            PoolFrozenEvent {
+                hunt_id,
+                caller: caller.clone(),
+            },
+        );
+
+        let audit_entry = PoolAuditEntry {
+            actor: caller.clone(),
+            operation: PoolOperation::Freeze,
+            timestamp: env.ledger().timestamp(),
+            amount: None,
+        };
+        Storage::append_audit_entry(&env, hunt_id, audit_entry);
+
+        Ok(())
+    }
+
+    /// Unfreezes a reward pool, re-enabling distributions.
+    ///
+    /// Can be called by either the pool creator or the contract admin.
+    /// Emits a `PoolUnfrozenEvent`.
+    ///
+    /// # Arguments
+    /// * `caller` - The address calling unfreeze (must be pool creator or admin)
+    /// * `hunt_id` - The hunt whose pool to unfreeze
+    ///
+    /// # Errors
+    /// * `PoolNotFound` - No pool exists for this hunt_id
+    /// * `Unauthorized` - Caller is neither the pool creator nor the contract admin
+    pub fn unfreeze_pool(
+        env: Env,
+        caller: Address,
+        hunt_id: u64,
+    ) -> Result<(), RewardErrorCode> {
+        caller.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        // Both the pool creator and the contract admin may unfreeze a pool.
+        let is_admin = Storage::get_admin(&env)
+            .map(|admin| admin == caller)
+            .unwrap_or(false);
+        if caller != config.creator && !is_admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        config.frozen = false;
+        Storage::set_pool_config(&env, hunt_id, &config);
+
+        env.events().publish(
+            (symbol_short!("POOL_UFRZ"), hunt_id),
+            PoolUnfrozenEvent {
+                hunt_id,
+                caller: caller.clone(),
+            },
+        );
+
+        let audit_entry = PoolAuditEntry {
+            actor: caller.clone(),
+            operation: PoolOperation::Unfreeze,
+            timestamp: env.ledger().timestamp(),
+            amount: None,
+        };
+        Storage::append_audit_entry(&env, hunt_id, audit_entry);
+
+        Ok(())
+    }
+
+    /// Returns whether a reward pool is currently frozen.
+    /// Returns `false` if no pool exists for the given `hunt_id`.
+    pub fn is_pool_frozen(env: Env, hunt_id: u64) -> bool {
+        Storage::get_pool_config(&env, hunt_id)
+            .map(|config| config.frozen)
+            .unwrap_or(false)
     }
 
     pub fn set_daily_pool_cap(
@@ -834,6 +969,13 @@ impl RewardManager {
         // Validate configuration
         if !reward_config.is_valid() {
             return Err(RewardErrorCode::InvalidConfig);
+        }
+
+        // Reject distribution if the pool is frozen
+        if let Some(pool_config) = Storage::get_pool_config(&env, hunt_id) {
+            if pool_config.frozen {
+                return Err(RewardErrorCode::PoolFrozen);
+            }
         }
 
         // Prevent double distribution using monotonic nonce
