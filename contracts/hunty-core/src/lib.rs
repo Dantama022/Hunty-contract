@@ -335,6 +335,7 @@ impl HuntyCore {
         hunt_id: u64,
         caller: Address,
         max_attempts_per_clue: u32,
+        attempt_cooldown_secs: u32,
     ) -> Result<(), HuntErrorCode> {
         if max_attempts_per_clue == 0 {
             return Err(HuntErrorCode::InvalidMaxAttempts);
@@ -349,6 +350,7 @@ impl HuntyCore {
         }
 
         hunt.max_attempts_per_clue = max_attempts_per_clue;
+        hunt.attempt_cooldown_secs = attempt_cooldown_secs;
         Storage::save_hunt(&env, &hunt);
         Ok(())
     }
@@ -2218,6 +2220,18 @@ impl HuntyCore {
             }
         }
 
+        if hunt.attempt_cooldown_secs > 0 {
+            if let Some(last_attempt) = progress.clue_last_attempts.get(clue_id) {
+                if current_time < last_attempt + (hunt.attempt_cooldown_secs as u64) {
+                    let cooldown_remaining = (last_attempt + (hunt.attempt_cooldown_secs as u64)) - current_time;
+                    return Err(HuntErrorCode::from(HuntError::AttemptCooldownNotExpired {
+                        cooldown_remaining,
+                    }));
+                }
+            }
+            progress.clue_last_attempts.set(clue_id, current_time);
+        }
+
         let submitted_hash = Self::normalize_and_hash_answer(&env, hunt_id, clue_id, &answer)
             .map_err(HuntErrorCode::from)?;
 
@@ -2393,8 +2407,8 @@ impl HuntyCore {
         {
             if hunt.max_submissions_per_minute > 0 {
                 progress.recent_submissions.push_back(current_time);
-                Storage::save_player_progress(&env, &progress);
             }
+            Storage::save_player_progress(&env, &progress);
             let incorrect_event = AnswerIncorrectEvent {
                 hunt_id,
                 player: player.clone(),
