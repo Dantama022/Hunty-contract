@@ -489,6 +489,7 @@ impl NftReward {
             owner: player_address,
             rarity: nft_data.metadata.rarity,
             tier: nft_data.metadata.tier,
+            metadata,
             rarity: metadata.rarity,
             tier: metadata.tier,
             metadata: metadata.clone(),
