@@ -69,6 +69,8 @@ export interface Hunt {
   description: string;
   end_time: u64;
   hunt_id: u64;
+  invite_code_hash: Option<Buffer>;
+  is_private: boolean;
   required_clues: u32;
   reward_config: HuntRewardConfig;
   status: HuntStatus;
@@ -117,6 +119,15 @@ export interface ClueAddedEvent {
   creator: string;
   hunt_id: u64;
   is_required: boolean;
+  difficulty: number;
+}
+
+export interface BatchClueInput {
+  question: string;
+  answer: string;
+  points: number;
+  is_required: boolean;
+  difficulty: number;
   points: u32;
   question: string;
 }
@@ -178,6 +189,33 @@ export interface HuntActivatedEvent {
   hunt_id: u64;
 }
 
+  async add_clue({
+    hunt_id,
+    question,
+    answer,
+    points,
+    is_required,
+    difficulty = 1,
+  }: {
+    hunt_id: bigint;
+    question: string;
+    answer: string;
+    points: number;
+    is_required: boolean;
+    difficulty?: number;
+  }): Promise<AssembledTransaction<number>> {
+    return this.call("add_clue", hunt_id, question, answer, points, is_required, difficulty);
+  }
+
+  async add_clues({
+    hunt_id,
+    clues,
+  }: {
+    hunt_id: bigint;
+    clues: BatchClueInput[];
+  }): Promise<AssembledTransaction<number[]>> {
+    return this.call("add_clues", hunt_id, clues);
+  }
 
 export interface HuntCancelledEvent {
   hunt_id: u64;
@@ -222,6 +260,30 @@ export interface PlayerRegisteredEvent {
   player: string;
 }
 
+/**
+ * Emitted when a hunt creator generates or updates the invite code for a private hunt.
+ */
+export interface InviteCodeGeneratedEvent {
+  creator: string;
+  hunt_id: u64;
+}
+
+/**
+ * Emitted when a hunt creator clears the invite code.
+ */
+export interface InviteCodeRevokedEvent {
+  creator: string;
+  hunt_id: u64;
+}
+
+/**
+ * Emitted when a player successfully registers using an invite code.
+ */
+export interface PlayerRegisteredWithInviteEvent {
+  hunt_id: u64;
+  player: string;
+}
+
 
 export interface HuntStatusChangedEvent {
   hunt_id: u64;
@@ -252,7 +314,25 @@ export const HuntErrorCode = {
   20: {message:"RewardDistributionFailed"},
   21: {message:"NoRewardsConfigured"},
   22: {message:"DuplicateSubmission"},
-  23: {message:"SubmissionExpired"}
+  23: {message:"SubmissionExpired"},
+  24: {message:"BannedPlayer"},
+  25: {message:"NoRequiredClues"},
+  26: {message:"RateLimitExceeded"},
+  27: {message:"ScoreOverflow"},
+  28: {message:"RegistrationsPaused"},
+  29: {message:"AnswersPaused"},
+  30: {message:"RewardsPaused"},
+  31: {message:"HuntEndTimeInPast"},
+  32: {message:"NoPendingAdmin"},
+  33: {message:"PendingAdminMismatch"},
+  34: {message:"InvalidRarity"},
+  35: {message:"InvalidTimeBonusConfig"},
+  36: {message:"AddressBlacklisted"},
+  37: {message:"ContractPaused"},
+  38: {message:"InvalidMaxAttempts"},
+  39: {message:"HuntIsPrivate"},
+  40: {message:"InvalidInviteCode"},
+  41: {message:"InviteNotConfigured"}
 }
 
 
@@ -368,7 +448,7 @@ export interface Client {
    * * `InvalidDescription` - If description exceeds maximum length
    * * `InvalidAddress` - If creator address is invalid
    */
-  create_hunt: ({creator, title, description, _start_time, end_time}: {creator: string, title: string, description: string, _start_time: Option<u64>, end_time: Option<u64>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u64>>>
+  create_hunt: ({creator, title, description, _start_time, end_time, max_submissions_per_minute, start_multiplier_bps}: {creator: string, title: string, description: string, _start_time: Option<u64>, end_time: Option<u64>, max_submissions_per_minute: u32, start_multiplier_bps: Option<u32>}, options?: MethodOptions) => Promise<AssembledTransaction<Result<u64>>>
 
   /**
    * Construct and simulate a activate_hunt transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -468,6 +548,30 @@ export interface Client {
    * * `DuplicateRegistration` - Player is already registered for this hunt
    */
   register_player: ({hunt_id, player}: {hunt_id: u64, player: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a set_hunt_privacy transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Sets whether a hunt is private (invite-only). Only callable in Draft status.
+   */
+  set_hunt_privacy: ({hunt_id, creator, is_private}: {hunt_id: u64, creator: string, is_private: boolean}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a generate_invite_code transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Generates or updates the invite code for a private hunt.
+   */
+  generate_invite_code: ({hunt_id, creator, invite_code}: {hunt_id: u64, creator: string, invite_code: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a revoke_invite_code transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Clears the invite code for a private hunt.
+   */
+  revoke_invite_code: ({hunt_id, creator}: {hunt_id: u64, creator: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a register_with_invite transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Registers a player for a private hunt using a valid invite code.
+   */
+  register_with_invite: ({hunt_id, player, invite_code}: {hunt_id: u64, player: string, invite_code: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a initialize_schema transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
