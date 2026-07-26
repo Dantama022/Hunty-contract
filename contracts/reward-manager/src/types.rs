@@ -1,10 +1,37 @@
-use soroban_sdk::{contracttype, Address, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Vec};
 
 pub use reward_interface::{
     resolve_tier_amount, tiers_are_strictly_ascending, RewardConfig, TierError, TimeBasedRewardTier,
 };
 
-/// Outcome of a manually resolved distribution.
+/// How XLM rewards are calculated from the pool at distribution time.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DistributionMode {
+    /// Fixed amount supplied by the caller (`RewardConfig.xlm_amount`).
+    Fixed = 0,
+    /// Share of the pool: `(player_score / total_scores) * pool_balance`.
+    Proportional = 1,
+}
+
+/// On-chain receipt / proof of a completed reward distribution.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DistributionProof {
+    /// Pool / hunt identifier.
+    pub pool_id: u64,
+    /// Recipient of the distribution.
+    pub player: Address,
+    /// XLM amount distributed (stroops).
+    pub amount: i128,
+    /// Ledger timestamp when the distribution was recorded.
+    pub timestamp: u64,
+    /// SHA-256 over (pool_id, player, amount, timestamp).
+    pub hash: BytesN<32>,
+}
+
+/// Resolution outcome for a manually resolved failed distribution.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolutionStatus {
@@ -52,13 +79,16 @@ pub struct DistributionRecord {
     pub nft_id: Option<u64>,
 }
 
-/// Public view of a distribution from a reward pool, including player address.
+/// Outcome recorded when an admin manually resolves a distribution that
+/// could not complete automatically (e.g. XLM was sent but the NFT mint
+/// failed). This is bookkeeping only and does not move funds.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PoolDistribution {
-    pub player: Address,
-    pub xlm_amount: i128,
-    pub nft_id: Option<u64>,
+pub enum ResolutionStatus {
+    /// The distribution is considered fully completed.
+    Completed,
+    /// The distribution is considered refunded / rolled back.
+    Refunded,
 }
 
 /// Configuration for a reward pool, set at creation time.
@@ -84,6 +114,10 @@ pub struct RewardPoolConfig {
     /// the appropriate tier's `xlm_amount` is selected at distribution time
     /// based on the player's (completion_time - registration_time) elapsed.
     pub time_based_tiers: Vec<TimeBasedRewardTier>,
+    /// Whether distributions from this pool are temporarily frozen.
+    /// When `true`, `distribute_rewards` and other distribution functions
+    /// will reject calls with `RewardErrorCode::PoolFrozen`.
+    pub frozen: bool,
 }
 
 /// Full status of a reward pool, returned by get_reward_pool().
@@ -100,6 +134,8 @@ pub struct RewardPoolStatus {
     pub creator: Address,
     /// Minimum XLM per distribution (0 = no minimum).
     pub min_distribution_amount: i128,
+    /// Whether distributions from this pool are temporarily frozen.
+    pub frozen: bool,
 }
 
 /// Pending NFT mint that failed and can be retried by the admin.
@@ -138,6 +174,34 @@ pub enum PoolOperation {
     Fund,
     Distribute,
     Withdraw,
+    Freeze,
+    Unfreeze,
+    /// Unused balance was migrated out to (or into) another hunt's pool.
+    Migrate,
+}
+
+/// Resolution status for admin-resolved distributions.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    Completed,
+    Refunded,
+}
+
+/// Comprehensive statistics for a reward pool, returned by get_pool_statistics().
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RewardPoolStatistics {
+    /// Total XLM funded (deposited) into the pool.
+    pub total_funded: i128,
+    /// Total XLM distributed from the pool.
+    pub total_distributed: i128,
+    /// Number of successful distributions made from this pool.
+    pub distribution_count: u64,
+    /// Average XLM amount per distribution (0 if none).
+    pub avg_distribution: i128,
+    /// Ledger timestamp of the most recent distribution (0 if none).
+    pub last_distribution_timestamp: u64,
 }
 
 /// A single entry in the pool audit log.
@@ -152,4 +216,14 @@ pub struct PoolAuditEntry {
     pub timestamp: u64,
     /// The XLM amount involved, if applicable.
     pub amount: Option<i128>,
+}
+
+/// Resolution status for failed distributions.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    /// Distribution completed successfully.
+    Completed,
+    /// Distribution refunded to pool.
+    Refunded,
 }

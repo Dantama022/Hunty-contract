@@ -4,6 +4,7 @@ use crate::types::{
     DistributionRecord, PoolAuditEntry, PoolDistribution, ResolutionStatus, RewardPoolConfig,
 };
 
+use crate::types::{DistributionRecord, PoolAuditEntry, ResolutionStatus, RewardPoolConfig};
 pub struct Storage;
 
 #[allow(dead_code)]
@@ -12,6 +13,16 @@ impl Storage {
     const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMI");
     const XLM_TOKEN_KEY: soroban_sdk::Symbol = symbol_short!("X");
     const NFT_CONTRACT_KEY: soroban_sdk::Symbol = symbol_short!("NFTA");
+    // Audit log
+    const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ACNT");
+    const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("ALOG");
+    /// Ring-buffer capacity for the per-pool audit log.
+    const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 50;
+    // Pause / emergency state
+    const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSED");
+    const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
+    // Pending NFT mints (for retry)
+    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
     // Daily spending caps
     const DAILY_POOL_CAP_KEY: soroban_sdk::Symbol = symbol_short!("DPC");
     const DAILY_GLOBAL_CAP_KEY: soroban_sdk::Symbol = symbol_short!("DGR");
@@ -22,7 +33,8 @@ impl Storage {
     const DIST_RECORD_KEY: soroban_sdk::Symbol = symbol_short!("DR");
     const DIST_NONCE_KEY: soroban_sdk::Symbol = symbol_short!("DN");
     const DIST_RESOLVE_KEY: soroban_sdk::Symbol = symbol_short!("DRS");
-    const POOL_DISTRIBUTIONS_KEY: soroban_sdk::Symbol = symbol_short!("PLDIST");
+    const DIST_PROOF_KEY: soroban_sdk::Symbol = symbol_short!("DPRF");
+    const LAST_DIST_TS_KEY: soroban_sdk::Symbol = symbol_short!("LDTS");
     const POOL_KEY: soroban_sdk::Symbol = symbol_short!("POOL");
     const POOL_CFG_KEY: soroban_sdk::Symbol = symbol_short!("PCFG");
     const POOL_DEP_KEY: soroban_sdk::Symbol = symbol_short!("PDEP");
@@ -31,12 +43,12 @@ impl Storage {
     const HUNTY_CORE_KEY: soroban_sdk::Symbol = symbol_short!("HCORE");
     const IN_DISTRIBUTION_KEY: soroban_sdk::Symbol = symbol_short!("IN_DIST");
     const HAS_AUTH_KEY: soroban_sdk::Symbol = symbol_short!("HAUTH");
-    const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ACNT");
-    const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("ALOG");
-    const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 50;
-    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
-    const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSED");
+    const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("AUDC");
+    const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("AUDL");
+    const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
     const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
+    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
+    const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 50;
 
     // ========== Admin ==========
 
@@ -226,6 +238,53 @@ impl Storage {
         (Self::DIST_RESOLVE_KEY, hunt_id, player.clone())
     }
 
+    // ========== Distribution Rate Limit (per pool) ==========
+
+    pub fn set_last_distribution_timestamp(env: &Env, hunt_id: u64, timestamp: u64) {
+        let key = (Self::LAST_DIST_TS_KEY, hunt_id);
+        env.storage().persistent().set(&key, &timestamp);
+        // Marker so timestamp 0 (common in tests / genesis) is distinct from "never distributed".
+        let flag_key = (Self::LAST_DIST_TS_KEY, hunt_id, true);
+        env.storage().persistent().set(&flag_key, &true);
+    }
+
+    pub fn get_last_distribution_timestamp(env: &Env, hunt_id: u64) -> Option<u64> {
+        let flag_key = (Self::LAST_DIST_TS_KEY, hunt_id, true);
+        if !env.storage().persistent().get(&flag_key).unwrap_or(false) {
+            return None;
+        }
+        let key = (Self::LAST_DIST_TS_KEY, hunt_id);
+        Some(env.storage().persistent().get(&key).unwrap_or(0))
+    }
+
+    // ========== Distribution Proof / Receipt ==========
+
+    pub fn set_distribution_proof(
+        env: &Env,
+        hunt_id: u64,
+        player: &Address,
+        proof: &DistributionProof,
+    ) {
+        let key = Self::distribution_proof_key(hunt_id, player);
+        env.storage().persistent().set(&key, proof);
+    }
+
+    pub fn get_distribution_proof(
+        env: &Env,
+        hunt_id: u64,
+        player: &Address,
+    ) -> Option<DistributionProof> {
+        let key = Self::distribution_proof_key(hunt_id, player);
+        env.storage().persistent().get(&key)
+    }
+
+    fn distribution_proof_key(
+        hunt_id: u64,
+        player: &Address,
+    ) -> (soroban_sdk::Symbol, u64, Address) {
+        (Self::DIST_PROOF_KEY, hunt_id, player.clone())
+    }
+
     // ========== Reward Pool Balance (per hunt) ==========
 
     pub fn set_pool_balance(env: &Env, hunt_id: u64, balance: i128) {
@@ -285,6 +344,35 @@ impl Storage {
             .persistent()
             .get(&Self::TOTAL_XLM_DST_KEY)
             .unwrap_or(0)
+    }
+
+    // ========== Pool Distribution Count & Last Timestamp ==========
+
+    pub fn set_pool_distribution_count(env: &Env, hunt_id: u64, count: u64) {
+        let key = (Self::POOL_DIST_COUNT_KEY, hunt_id);
+        env.storage().persistent().set(&key, &count);
+    }
+
+    pub fn get_pool_distribution_count(env: &Env, hunt_id: u64) -> u64 {
+        let key = (Self::POOL_DIST_COUNT_KEY, hunt_id);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    pub fn increment_pool_distribution_count(env: &Env, hunt_id: u64) -> u64 {
+        let current = Self::get_pool_distribution_count(env, hunt_id);
+        let new = current + 1;
+        Self::set_pool_distribution_count(env, hunt_id, new);
+        new
+    }
+
+    pub fn set_pool_last_distribution_timestamp(env: &Env, hunt_id: u64, timestamp: u64) {
+        let key = (Self::POOL_LAST_DIST_TS_KEY, hunt_id);
+        env.storage().persistent().set(&key, &timestamp);
+    }
+
+    pub fn get_pool_last_distribution_timestamp(env: &Env, hunt_id: u64) -> u64 {
+        let key = (Self::POOL_LAST_DIST_TS_KEY, hunt_id);
+        env.storage().persistent().get(&key).unwrap_or(0)
     }
 
     // Daily pool cap getters/setters
