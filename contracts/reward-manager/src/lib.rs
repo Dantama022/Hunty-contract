@@ -1,7 +1,9 @@
 #![cfg_attr(not(test), no_std)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, Symbol, Val, Vec,
+    contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, IntoVal, Symbol, Val,
+    Vec,
 };
+use soroban_sdk::xdr::ToXdr;
 
 pub use crate::errors::RewardErrorCode;
 use crate::nft_handler::NftHandler;
@@ -11,6 +13,7 @@ pub use crate::types::{
     PendingNftMint, PoolAuditEntry, PoolOperation, ResolutionStatus, RewardConfig,
     RewardPoolConfig, RewardPoolStatus, SemVer, TierError, TimeBasedRewardTier, ValidationResult,
 };
+pub use crate::types::{PendingNftMint, PoolAuditEntry, PoolOperation};
 use crate::xlm_handler::XlmHandler;
 
 // Funding validation constants
@@ -66,6 +69,20 @@ pub struct RewardPoolFundedEvent {
     pub amount: i128,
     pub new_balance: i128,
     pub total_deposited: i128,
+    /// Configured funding target (0 = no target).
+    pub target_amount: i128,
+    /// Percentage of target reached (0–100+, floored). 0 when target_amount is 0.
+    pub percentage_of_target: u32,
+    /// Funding progress toward the target (same as total_deposited when targeting).
+    pub funding_progress: i128,
+}
+
+/// Event emitted when a distribution is blocked by the per-pool rate limit.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct DistributionCooldownEvent {
+    pub hunt_id: u64,
+    pub remaining_secs: u64,
 }
 
 /// Event emitted when the unused balance of an expired or cancelled hunt's
@@ -410,6 +427,73 @@ impl RewardManager {
         Ok(())
     }
 
+    /// Sets the funding target used for top-up progress notifications.
+    /// `target_amount` of 0 disables percentage tracking (events report 0%).
+    pub fn set_pool_target_amount(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        target_amount: i128,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+        if target_amount < 0 {
+            return Err(RewardErrorCode::InvalidAmount);
+        }
+
+        config.target_amount = target_amount;
+        Storage::set_pool_config(&env, hunt_id, &config);
+        Ok(())
+    }
+
+    /// Sets the minimum seconds between distributions for a pool (0 disables).
+    pub fn set_min_distribution_interval(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        min_distribution_interval_secs: u64,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        config.min_distribution_interval_secs = min_distribution_interval_secs;
+        Storage::set_pool_config(&env, hunt_id, &config);
+        Ok(())
+    }
+
+    /// Sets the distribution mode (Fixed or Proportional) for a pool.
+    pub fn set_distribution_mode(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        mode: DistributionMode,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        config.distribution_mode = mode;
+        Storage::set_pool_config(&env, hunt_id, &config);
+        Ok(())
+    }
+
     /// Updates (or installs) the time-based reward tier schedule on an existing
     /// reward pool, enabling conditional reward amounts based on player completion
     /// time (acceptance criteria: "Define time-based reward tiers in pool config").
@@ -558,6 +642,18 @@ impl RewardManager {
             .ok_or(RewardErrorCode::PoolBalanceOverflow)?;
         Storage::set_pool_total_deposited(&env, hunt_id, total_deposited);
 
+        let target_amount = pool_config.target_amount;
+        let percentage_of_target = if target_amount > 0 {
+            let pct = (total_deposited.saturating_mul(100)) / target_amount;
+            if pct > u32::MAX as i128 {
+                u32::MAX
+            } else {
+                pct as u32
+            }
+        } else {
+            0u32
+        };
+
         env.events().publish(
             (symbol_short!("POOL_FND"), hunt_id),
             RewardPoolFundedEvent {
@@ -566,6 +662,9 @@ impl RewardManager {
                 amount,
                 new_balance,
                 total_deposited,
+                target_amount,
+                percentage_of_target,
+                funding_progress: total_deposited,
             },
         );
 
@@ -996,6 +1095,28 @@ impl RewardManager {
 
         let _reentrancy_guard = ReentrancyGuard::acquire(&env)?;
 
+        // Per-pool distribution rate limiting
+        if let Some(pool_config) = Storage::get_pool_config(&env, hunt_id) {
+            let interval = pool_config.min_distribution_interval_secs;
+            if interval > 0 {
+                let now = env.ledger().timestamp();
+                if let Some(last) = Storage::get_last_distribution_timestamp(&env, hunt_id) {
+                    let elapsed = now.saturating_sub(last);
+                    if elapsed < interval {
+                        let remaining_secs = interval - elapsed;
+                        env.events().publish(
+                            (symbol_short!("DIST_CD"), hunt_id),
+                            DistributionCooldownEvent {
+                                hunt_id,
+                                remaining_secs,
+                            },
+                        );
+                        return Err(RewardErrorCode::DistributionRateLimited);
+                    }
+                }
+            }
+        }
+
         let mut xlm_amount = 0i128;
         let mut nft_id: Option<u64> = None;
 
@@ -1144,6 +1265,28 @@ impl RewardManager {
         // Instance storage is immutable and not subject to TTL expiration
         Storage::increment_distribution_nonce(&env, hunt_id, &player_address);
 
+        let timestamp = env.ledger().timestamp();
+        let proof_hash = Self::compute_distribution_hash(
+            &env,
+            hunt_id,
+            &player_address,
+            xlm_amount,
+            timestamp,
+        );
+        Storage::set_distribution_proof(
+            &env,
+            hunt_id,
+            &player_address,
+            &DistributionProof {
+                pool_id: hunt_id,
+                player: player_address.clone(),
+                amount: xlm_amount,
+                timestamp,
+                hash: proof_hash,
+            },
+        );
+        Storage::set_last_distribution_timestamp(&env, hunt_id, timestamp);
+
         let event = RewardsDistributedEvent {
             hunt_id,
             player: player_address.clone(),
@@ -1278,6 +1421,135 @@ impl RewardManager {
                 nft_mint_failed: false,
             },
         }
+    }
+
+    /// Remaining seconds until the next distribution is allowed for this pool.
+    /// Returns 0 if no interval is configured or the cooldown has elapsed.
+    pub fn get_dist_cooldown(env: Env, hunt_id: u64) -> u64 {
+        let Some(config) = Storage::get_pool_config(&env, hunt_id) else {
+            return 0;
+        };
+        let interval = config.min_distribution_interval_secs;
+        if interval == 0 {
+            return 0;
+        }
+        let Some(last) = Storage::get_last_distribution_timestamp(&env, hunt_id) else {
+            return 0;
+        };
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(last);
+        interval.saturating_sub(elapsed)
+    }
+
+    /// Returns the on-chain distribution receipt/proof for a hunt/player pair.
+    pub fn get_distribution_proof(
+        env: Env,
+        hunt_id: u64,
+        player: Address,
+    ) -> Option<DistributionProof> {
+        Storage::get_distribution_proof(&env, hunt_id, &player)
+    }
+
+    /// Verifies a distribution proof against the on-chain receipt.
+    ///
+    /// Recomputes SHA-256(pool_id || player || amount || timestamp) and checks
+    /// it matches both the provided `hash` and the stored receipt (when present).
+    pub fn verify_distribution(
+        env: Env,
+        pool_id: u64,
+        player: Address,
+        amount: i128,
+        timestamp: u64,
+        hash: BytesN<32>,
+    ) -> bool {
+        let expected = Self::compute_distribution_hash(&env, pool_id, &player, amount, timestamp);
+        if expected != hash {
+            return false;
+        }
+        match Storage::get_distribution_proof(&env, pool_id, &player) {
+            Some(proof) => {
+                proof.hash == hash
+                    && proof.amount == amount
+                    && proof.timestamp == timestamp
+                    && proof.pool_id == pool_id
+                    && proof.player == player
+            }
+            None => false,
+        }
+    }
+
+    fn compute_distribution_hash(
+        env: &Env,
+        pool_id: u64,
+        player: &Address,
+        amount: i128,
+        timestamp: u64,
+    ) -> BytesN<32> {
+        // Hash payload: pool_id || amount || timestamp || player (as Val/xdr bytes)
+        let payload = (pool_id, amount, timestamp, player.clone()).to_xdr(env);
+        env.crypto().sha256(&payload).to_bytes()
+    }
+
+    /// Distribute a proportional share of the pool based on player score.
+    ///
+    /// Amount = floor((player_score / total_scores) * pool_balance).
+    /// Remainder stays in the pool. Enforces min_distribution_amount when set.
+    /// Requires the pool's distribution_mode to be Proportional (or will still
+    /// compute proportionally when called via this entry point).
+    ///
+    /// Returns the XLM amount distributed.
+    pub fn distribute_proportional(
+        env: Env,
+        hunt_id: u64,
+        player: Address,
+        player_score: u64,
+        total_scores: u64,
+    ) -> Result<i128, RewardErrorCode> {
+        if total_scores == 0 || player_score == 0 || player_score > total_scores {
+            return Err(RewardErrorCode::InvalidScore);
+        }
+
+        let pool_config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if pool_config.distribution_mode != DistributionMode::Proportional {
+            return Err(RewardErrorCode::InvalidConfig);
+        }
+
+        let pool_balance = Storage::get_pool_balance(&env, hunt_id);
+        if pool_balance <= 0 {
+            return Err(RewardErrorCode::InsufficientPool);
+        }
+
+        // floor((player_score / total_scores) * pool); remainder remains in pool
+        let amount = (pool_balance
+            .checked_mul(player_score as i128)
+            .ok_or(RewardErrorCode::InvalidAmount)?)
+            / (total_scores as i128);
+
+        if amount <= 0 {
+            return Err(RewardErrorCode::InvalidAmount);
+        }
+
+        if pool_config.min_distribution_amount > 0
+            && amount < pool_config.min_distribution_amount
+        {
+            return Err(RewardErrorCode::BelowMinimumAmount);
+        }
+
+        let config = RewardConfig {
+            xlm_amount: Some(amount),
+            nft_contract: None,
+            nft_title: soroban_sdk::String::from_str(&env, ""),
+            nft_description: soroban_sdk::String::from_str(&env, ""),
+            nft_image_uri: soroban_sdk::String::from_str(&env, ""),
+            nft_hunt_title: soroban_sdk::String::from_str(&env, ""),
+            nft_rarity: 0,
+            nft_tier: 0,
+        };
+
+        Self::distribute_rewards(env, hunt_id, player, config)?;
+        Ok(amount)
     }
 
     /// Returns the current reward pool balance for a hunt.
