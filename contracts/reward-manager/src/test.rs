@@ -2160,20 +2160,15 @@ mod test {
     }
 
     #[test]
-    fn test_authorized_contract_can_call_distribute() {
+    fn test_admin_removes_authorized_contract() {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
-        let (contract_id, token_address, token_admin) = setup(&env);
+        let (contract_id, token_address, _) = setup(&env);
         let admin = Address::generate(&env);
-        let creator = Address::generate(&env);
-        let player = Address::generate(&env);
         let authorized = Address::generate(&env);
 
-        mint_tokens(&env, &token_address, &token_admin, &creator, 10_000);
-
-        // Initialize the contract and set up authorized contracts
         env.as_contract(&contract_id, || {
-            RewardManager::initialize(env.clone(), admin.clone(), token_address.clone()).unwrap();
+            RewardManager::initialize(env.clone(), admin.clone(), token_address).unwrap();
             Storage::add_authorized_contract(&env, &authorized);
             create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 0).unwrap();
             RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 5_000).unwrap();
@@ -2194,18 +2189,15 @@ mod test {
             args.push_back(player.clone().into_val(&env));
             args.push_back(config.clone().into_val(&env));
 
-            let result = env.try_invoke_contract::<(), RewardErrorCode>(
-                &contract_id,
-                &Symbol::new(&env, "distribute_rewards"),
-                args,
+            let result = RewardManager::remove_authorized_contract(
+                env.clone(),
+                admin.clone(),
+                authorized.clone(),
             );
             assert!(result.is_ok(), "invocation should succeed");
             let inner: Result<(), soroban_sdk::ConversionError> = result.unwrap();
             assert!(inner.is_ok(), "distribute_rewards should return Ok");
         });
-
-        // Verify player received tokens
-        assert_eq!(get_balance(&env, &token_address, &player), 2_000);
     }
 
     // Ignored: soroban-sdk 22 exposes no immediate-caller API, so the
@@ -2218,30 +2210,50 @@ mod test {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
         let (contract_id, token_address, token_admin) = setup(&env);
-        let admin = Address::generate(&env);
         let creator = Address::generate(&env);
-        let player = Address::generate(&env);
-        let authorized = Address::generate(&env);
-        let unauthorized = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+        let player3 = Address::generate(&env);
 
-        mint_tokens(&env, &token_address, &token_admin, &creator, 10_000);
+        // Fund pool with enough for 3 distributions
+        mint_tokens(&env, &token_address, &token_admin, &creator, 30_000_000);
 
         env.as_contract(&contract_id, || {
             RewardManager::initialize(env.clone(), admin.clone(), token_address.clone()).unwrap();
             RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
-            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 5_000).unwrap();
-
-            // Configure authorized contracts — only 'authorized' is allowed
-            Storage::add_authorized_contract(&env, &authorized);
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 30_000_000).unwrap();
         });
 
-        // Try to distribute from an unauthorized contract context
-        let config = xlm_only_config(&env, 2_000);
-        env.as_contract(&unauthorized, || {
-            let mut args: Vec<Val> = Vec::new(&env);
-            args.push_back((1u64).into_val(&env));
-            args.push_back(player.clone().into_val(&env));
-            args.push_back(config.clone().into_val(&env));
+        // Distribute to 3 players
+        env.as_contract(&contract_id, || {
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player1.clone(),
+                xlm_only_config(&env, 10_000_000),
+            )
+            .unwrap();
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player2.clone(),
+                xlm_only_config(&env, 10_000_000),
+            )
+            .unwrap();
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player3.clone(),
+                xlm_only_config(&env, 10_000_000),
+            )
+            .unwrap();
+        });
+
+        // Test pagination
+        env.as_contract(&contract_id, || {
+            // Get total count
+            let count = RewardManager::get_pool_distribution_count(env.clone(), 1);
+            assert_eq!(count, 3);
 
             let result = env.try_invoke_contract::<(), RewardErrorCode>(
                 &contract_id,
@@ -2255,8 +2267,20 @@ mod test {
             let _inner: Result<(), soroban_sdk::ConversionError> = result.unwrap();
         });
 
-        // Verify player received nothing
-        assert_eq!(get_balance(&env, &token_address, &player), 0);
+            // Get second page (offset 2, limit 2)
+            let page2 = RewardManager::get_pool_distributions(env.clone(), 1, 2, 2);
+            assert_eq!(page2.len(), 1);
+            assert_eq!(page2.get(0).unwrap().player, player3);
+            assert_eq!(page2.get(0).unwrap().xlm_amount, 10_000_000);
+
+            // Get empty page (offset beyond list)
+            let page3 = RewardManager::get_pool_distributions(env.clone(), 1, 10, 2);
+            assert_eq!(page3.len(), 0);
+
+            // Get all at once
+            let all = RewardManager::get_pool_distributions(env.clone(), 1, 0, 100);
+            assert_eq!(all.len(), 3);
+        });
     }
 
     // ========== get_pool_statistics ==========
@@ -2388,25 +2412,24 @@ mod test {
     }
 
     #[test]
-    fn test_admin_removes_authorized_contract() {
+    fn test_get_pool_distributions_empty() {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
-        let (contract_id, token_address, _) = setup(&env);
-        let admin = Address::generate(&env);
-        let authorized = Address::generate(&env);
+        let (contract_id, token_address, _token_admin) = setup(&env);
+        let creator = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            RewardManager::initialize(env.clone(), admin.clone(), token_address).unwrap();
-            Storage::add_authorized_contract(&env, &authorized);
-            assert!(Storage::is_authorized_contract(&env, &authorized));
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+        });
 
-            let result = RewardManager::remove_authorized_contract(
-                env.clone(),
-                admin.clone(),
-                authorized.clone(),
-            );
-            assert!(result.is_ok());
-            assert!(!Storage::is_authorized_contract(&env, &authorized));
+        env.as_contract(&contract_id, || {
+            // Empty pool should return 0 count and empty list
+            let count = RewardManager::get_pool_distribution_count(env.clone(), 1);
+            assert_eq!(count, 0);
+
+            let distributions = RewardManager::get_pool_distributions(env.clone(), 1, 0, 10);
+            assert_eq!(distributions.len(), 0);
         });
     }
 

@@ -1,6 +1,6 @@
 use crate::storage::Storage;
 use hunty_migration::{
-    MigrationFramework, UpgradeAuthorization, UpgradeAuthError, UpgradeExecutedEvent,
+    MigrationFramework, UpgradeAuthError, UpgradeAuthorization, UpgradeExecutedEvent,
     UpgradeHistoryEntry, UpgradeProposal, UpgradeProposedEvent, CURRENT_SCHEMA_VERSION,
 };
 use soroban_sdk::{Address, Env, Symbol};
@@ -29,7 +29,12 @@ impl RewardManagerMigration {
     ) -> Result<UpgradeProposal, UpgradeAuthError> {
         UpgradeAuthorization::require_admin(env, admin, Self::configured_admin(env))?;
         let now = env.ledger().timestamp();
-        Ok(UpgradeAuthorization::propose_upgrade(env, admin, target_version, now))
+        Ok(UpgradeAuthorization::propose_upgrade(
+            env,
+            admin,
+            target_version,
+            now,
+        ))
     }
 
     pub fn set_upgrade_timelock(
@@ -50,7 +55,11 @@ impl RewardManagerMigration {
         UpgradeAuthorization::get_timelock_seconds(env)
     }
 
-    pub fn get_upgrade_history(env: &Env, offset: u32, limit: u32) -> soroban_sdk::Vec<UpgradeHistoryEntry> {
+    pub fn get_upgrade_history(
+        env: &Env,
+        offset: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<UpgradeHistoryEntry> {
         UpgradeAuthorization::get_history(env, offset, limit)
     }
 
@@ -104,9 +113,13 @@ impl RewardManagerMigration {
         ))
     }
 
-    pub fn rollback_migration(env: &Env, admin: &Address) -> Result<MigrationReport, UpgradeAuthError> {
+    pub fn rollback_migration(
+        env: &Env,
+        admin: &Address,
+    ) -> Result<MigrationReport, UpgradeAuthError> {
         UpgradeAuthorization::require_admin(env, admin, Self::configured_admin(env))?;
-        let previous = MigrationFramework::rollback_version(env).ok_or(UpgradeAuthError::NoProposal)?;
+        let previous =
+            MigrationFramework::rollback_version(env).ok_or(UpgradeAuthError::NoProposal)?;
         let current = MigrationFramework::detect_version(env);
         MigrationFramework::set_version(env, previous);
         MigrationFramework::clear_rollback(env);

@@ -1977,6 +1977,36 @@ impl RewardManager {
         Ok(())
     }
 
+    /// Returns a paginated list of distributions made from a specific reward pool.
+    ///
+    /// # Arguments
+    /// * `hunt_id` - The hunt whose pool distributions to query
+    /// * `offset` - Starting index for pagination (0-based)
+    /// * `limit` - Maximum number of entries to return
+    ///
+    /// # Returns
+    /// A Vec of PoolDistribution entries containing player addresses and distribution details.
+    /// Returns an empty Vec if the pool has no distributions or offset is beyond the list.
+    pub fn get_pool_distributions(
+        env: Env,
+        hunt_id: u64,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<PoolDistribution> {
+        Storage::get_pool_distributions(&env, hunt_id, offset, limit)
+    }
+
+    /// Returns the total count of distributions made from a specific reward pool.
+    ///
+    /// # Arguments
+    /// * `hunt_id` - The hunt whose pool distribution count to query
+    ///
+    /// # Returns
+    /// The total number of distributions for the pool.
+    pub fn get_pool_distribution_count(env: Env, hunt_id: u64) -> u32 {
+        Storage::get_pool_distribution_count(&env, hunt_id)
+    }
+
     /// Allows the admin to withdraw any unclaimed (surplus) XLM remaining in a reward pool.
     ///
     /// This is needed when a hunt concludes with fewer winners than anticipated,
