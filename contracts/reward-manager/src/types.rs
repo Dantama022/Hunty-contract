@@ -193,3 +193,13 @@ pub struct PoolAuditEntry {
     /// The XLM amount involved, if applicable.
     pub amount: Option<i128>,
 }
+
+/// Resolution status for failed distributions.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolutionStatus {
+    /// Distribution completed successfully.
+    Completed,
+    /// Distribution refunded to pool.
+    Refunded,
+}
