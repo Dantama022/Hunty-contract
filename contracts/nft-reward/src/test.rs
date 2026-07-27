@@ -2,7 +2,7 @@
 extern crate std;
 
 use crate::{
-    NftMetadata, NftMintedEvent, NftReward, NftRewardClient, NftErrorCode,
+    NftMetadata, NftMintedEvent, NftBurnedEvent, NftReward, NftRewardClient, NftErrorCode,
     METADATA_SCHEMA_VERSION,
 };
 use soroban_sdk::{
@@ -129,9 +129,10 @@ fn mint_transferable(
 fn test_initialize_stores_admin() {
     let env = setup_env();
     let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
     let contract_id = env.register(NftReward, ());
     let client = NftRewardClient::new(&env, &contract_id);
-    client.initialize(&admin, &None);
+    client.initialize(&admin, &minter, &None);
 
     assert_eq!(client.get_admin(), Some(admin));
 }
@@ -144,10 +145,11 @@ fn test_initialize_requires_auth() {
     env.ledger().set_timestamp(1000);
 
     let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
     let contract_id = env.register(NftReward, ());
     let client = NftRewardClient::new(&env, &contract_id);
 
-    client.initialize(&admin, &None);
+    client.initialize(&admin, &minter, &None);
 }
 
 #[test]
@@ -155,10 +157,11 @@ fn test_initialize_requires_auth() {
 fn test_initialize_cannot_be_called_twice() {
     let env = setup_env();
     let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
     let contract_id = env.register(NftReward, ());
     let client = NftRewardClient::new(&env, &contract_id);
-    client.initialize(&admin, &None);
-    client.initialize(&admin, &None);
+    client.initialize(&admin, &minter, &None);
+    client.initialize(&admin, &minter, &None);
 }
 
 #[test]
@@ -453,3 +456,249 @@ fn test_update_nft_metadata_owner_only() {
     client.update_nft_metadata(
         &nft_id,
         &owner,
+        &String::from_str(&env, "Updated desc"),
+        &String::from_str(&env, "ipfs://new"),
+    );
+
+    let meta = client.get_nft_metadata(&nft_id).unwrap();
+    assert_eq!(
+        meta.description,
+        String::from_str(&env, "Updated desc")
+    );
+    assert_eq!(meta.image_uri, String::from_str(&env, "ipfs://new"));
+    // Title should remain immutable
+    assert_eq!(meta.title, String::from_str(&env, "Original"));
+}
+
+// =========================================================================
+// BURN TESTS
+// =========================================================================
+
+#[test]
+fn test_burn_nft_success() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let metadata = create_metadata(&env, "To Burn", "NFT to be burned", "ipfs://burn");
+    let nft_id = client.mint_reward_nft(&minter, &1, &player, &metadata);
+
+    // Verify NFT exists before burn
+    assert!(client.get_nft(&nft_id).is_some());
+    assert!(client.owner_of(&nft_id).is_some());
+
+    // Burn the NFT
+    client.burn_nft(&nft_id, &player);
+
+    // Verify NFT no longer exists
+    assert!(client.get_nft(&nft_id).is_none());
+    assert!(client.owner_of(&nft_id).is_none());
+    assert!(client.get_nft_metadata(&nft_id).is_none());
+}
+
+#[test]
+fn test_burn_nft_removes_from_player_nfts() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let metadata1 = create_metadata(&env, "NFT 1", "First NFT", "ipfs://first");
+    let metadata2 = create_metadata(&env, "NFT 2", "Second NFT", "ipfs://second");
+
+    let nft_id1 = client.mint_reward_nft(&minter, &1, &player, &metadata1);
+    let nft_id2 = client.mint_reward_nft(&minter, &2, &player, &metadata2);
+
+    // Verify both NFTs are in player's list
+    let player_nfts = client.get_player_nfts(&player, &0, &10);
+    assert_eq!(player_nfts.len(), 2);
+
+    // Burn the first NFT
+    client.burn_nft(&nft_id1, &player);
+
+    // Verify only second NFT remains
+    let player_nfts = client.get_player_nfts(&player, &0, &10);
+    assert_eq!(player_nfts.len(), 1);
+    assert_eq!(player_nfts.get(0).unwrap(), nft_id2);
+}
+
+#[test]
+fn test_burn_nft_removes_from_hunt_index() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let metadata = create_metadata(&env, "Hunt NFT", "NFT for hunt", "ipfs://hunt");
+    let nft_id = client.mint_reward_nft(&minter, &42, &player, &metadata);
+
+    // Verify hunt has 1 NFT
+    assert_eq!(client.get_hunt_nft_count(&42), 1);
+
+    // Burn the NFT
+    client.burn_nft(&nft_id, &player);
+
+    // Verify hunt has 0 NFTs
+    assert_eq!(client.get_hunt_nft_count(&42), 0);
+    let hunt_nfts = client.get_nfts_by_hunt(&42, &0, &10);
+    assert_eq!(hunt_nfts.len(), 0);
+}
+
+#[test]
+fn test_burn_nft_not_owner_fails() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let owner = Address::generate(&env);
+    let not_owner = Address::generate(&env);
+    let metadata = create_metadata(&env, "Not Yours", "Someone else's NFT", "ipfs://notyours");
+    let nft_id = client.mint_reward_nft(&minter, &1, &owner, &metadata);
+
+    // Non-owner tries to burn, should fail with NotOwner error
+    let result = client.try_burn_nft(&nft_id, &not_owner);
+    assert!(result.is_err());
+    match result {
+        Err(Ok(NftErrorCode::NotOwner)) => {} // Expected
+        other => panic!("Expected NotOwner error, got {:?}", other),
+    }
+
+    // Verify NFT still exists
+    assert!(client.get_nft(&nft_id).is_some());
+}
+
+#[test]
+fn test_burn_nft_nonexistent_fails() {
+    let env = setup_env();
+    let (client, _) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+
+    // Try to burn non-existent NFT
+    let result = client.try_burn_nft(&999, &player);
+    assert!(result.is_err());
+    match result {
+        Err(Ok(NftErrorCode::NftNotFound)) => {} // Expected
+        other => panic!("Expected NftNotFound error, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_burn_nft_emits_event() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let metadata = create_metadata(&env, "Event Burn", "Burning with event", "ipfs://eventburn");
+    let nft_id = client.mint_reward_nft(&minter, &7, &player, &metadata);
+
+    // Burn the NFT
+    client.burn_nft(&nft_id, &player);
+
+    // Verify NftBurned event was emitted
+    let events = env.events().all();
+    assert!(!events.is_empty());
+
+    // Find the NftBurned event
+    let mut found_burn_event = false;
+    for i in 0..events.len() {
+        let (_contract, topics, _data): (Address, soroban_sdk::Vec<Val>, Val) =
+            events.get(i).unwrap();
+        if topics.len() >= 1 {
+            if let Ok(topic) = Symbol::try_from_val(&env, &topics.get(0).unwrap()) {
+                if topic == Symbol::new(&env, "NftBurned") {
+                    found_burn_event = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(found_burn_event, "NftBurned event not found");
+}
+
+#[test]
+fn test_burn_nft_then_verify_ownership_fails() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let metadata = create_metadata(&env, "Verify Burn", "Check ownership after burn", "ipfs://verify");
+    let nft_id = client.mint_reward_nft(&minter, &1, &player, &metadata);
+
+    // Verify ownership before burn
+    assert!(client.verify_ownership(&player, &nft_id));
+
+    // Burn the NFT
+    client.burn_nft(&nft_id, &player);
+
+    // Ownership verification should fail after burn
+    assert!(!client.verify_ownership(&player, &nft_id));
+}
+
+#[test]
+fn test_burn_nft_then_has_hunt_nft_false() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let metadata = create_metadata(&env, "Hunt Check", "Has hunt check", "ipfs://huntcheck");
+    let nft_id = client.mint_reward_nft(&minter, &5, &player, &metadata);
+
+    // Verify has_hunt_nft before burn
+    assert!(client.has_hunt_nft(&player, &5));
+
+    // Burn the NFT
+    client.burn_nft(&nft_id, &player);
+
+    // has_hunt_nft should return false after burn
+    assert!(!client.has_hunt_nft(&player, &5));
+}
+
+#[test]
+fn test_burn_nft_multiple_same_owner() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+
+    // Mint 3 NFTs for the same owner
+    let meta1 = create_metadata(&env, "First", "First NFT", "ipfs://first");
+    let meta2 = create_metadata(&env, "Second", "Second NFT", "ipfs://second");
+    let meta3 = create_metadata(&env, "Third", "Third NFT", "ipfs://third");
+
+    let id1 = client.mint_reward_nft(&minter, &1, &player, &meta1);
+    let id2 = client.mint_reward_nft(&minter, &2, &player, &meta2);
+    let id3 = client.mint_reward_nft(&minter, &3, &player, &meta3);
+
+    // Burn the middle one
+    client.burn_nft(&id2, &player);
+
+    // Verify id2 is gone
+    assert!(client.get_nft(&id2).is_none());
+
+    // Verify id1 and id3 still exist
+    assert!(client.get_nft(&id1).is_some());
+    assert!(client.get_nft(&id3).is_some());
+
+    // Verify player still has 2 NFTs
+    let player_nfts = client.get_player_nfts(&player, &0, &10);
+    assert_eq!(player_nfts.len(), 2);
+}
+
+#[test]
+fn test_burn_nft_total_supply_unchanged() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+
+    let player = Address::generate(&env);
+    let metadata = create_metadata(&env, "Supply Test", "Testing supply after burn", "ipfs://supply");
+
+    let supply_before = client.total_supply();
+    let nft_id = client.mint_reward_nft(&minter, &1, &player, &metadata);
+
+    assert_eq!(client.total_supply(), supply_before + 1);
+
+    // total_supply() is a mint counter and should NOT decrement after burn
+    client.burn_nft(&nft_id, &player);
+    assert_eq!(client.total_supply(), supply_before + 1);
+
+    // Verify NFT no longer exists
+    assert!(client.get_nft(&nft_id).is_none());
+}

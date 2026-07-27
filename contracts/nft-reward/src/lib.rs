@@ -1,7 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, Address, Env, Map, String, Symbol,
-    Val, Vec, symbol_short,
+    Val, Vec,
 };
 
 const MAX_URI_LEN: usize = 512;
@@ -11,6 +11,8 @@ const MAX_NFT_URI_BYTES: u32 = 512;
 const MAX_EXTENSION_FIELDS: u32 = 10;
 const MAX_EXTENSION_KEY_BYTES: u32 = 64;
 const MAX_EXTENSION_VALUE_BYTES: u32 = 512;
+/// Maximum number of NFTs to return in a single scan query (pagination cap).
+const MAX_SCAN_LIMIT: u32 = 1000;
 
 /// Core display metadata for an NFT (title, description, image URI).
 /// Supports off-chain storage references to keep gas costs low.
@@ -178,11 +180,22 @@ pub struct NftExtensionRemovedEvent {
     pub updater: Address,
 }
 
+/// Event emitted when an NFT is burned (permanently destroyed).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NftBurnedEvent {
+    pub nft_id: u64,
+    pub hunt_id: u64,
+    pub owner: Address,
+}
+
 mod errors;
 pub use errors::NftErrorCode;
 mod migration;
 mod sanitization;
 mod storage;
+#[cfg(test)]
+mod test;
 use storage::Storage;
 
 #[contract]
@@ -880,8 +893,17 @@ impl NftReward {
     /// Burns (permanently destroys) an NFT, removing it from storage and the owner's list.
     ///
     /// # Authorization
-    /// The `owner` must authorize this call. The caller must also be the current owner.
-    pub fn burn(env: Env, nft_id: u64, owner: Address) -> Result<(), crate::errors::NftErrorCode> {
+    /// The `owner` must authorize this call and be the current owner of the NFT.
+    ///
+    /// # Errors
+    /// Returns `NftNotFound` if the NFT does not exist.
+    /// Returns `NotOwner` if the caller is not the current owner.
+    /// Returns `NftLocked` if the NFT is locked (e.g., staked elsewhere).
+    pub fn burn_nft(
+        env: Env,
+        nft_id: u64,
+        owner: Address,
+    ) -> Result<(), crate::errors::NftErrorCode> {
         owner.require_auth();
 
         let nft = Storage::get_nft(&env, nft_id).ok_or(crate::errors::NftErrorCode::NftNotFound)?;
@@ -890,42 +912,24 @@ impl NftReward {
             return Err(crate::errors::NftErrorCode::NotOwner);
         }
 
+        if nft.locked {
+            return Err(crate::errors::NftErrorCode::NftLocked);
+        }
+
         let hunt_id = nft.hunt_id;
         Storage::remove_nft(&env, nft_id);
         Storage::remove_nft_from_hunt(&env, hunt_id, nft_id);
+        Storage::remove_nft_from_owner(&env, &owner, nft_id);
 
-        let count_key = (symbol_short!("ONFC"), owner.clone());
-        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-        let exist_key = (symbol_short!("ONFX"), owner.clone(), nft_id);
-        if env.storage().persistent().has(&exist_key) {
-            let mut found = false;
-            for i in 0..count {
-                let entry_key = (symbol_short!("ONFT"), owner.clone(), i);
-                if let Some(stored_id) = env.storage().persistent().get::<_, u64>(&entry_key) {
-                    if stored_id == nft_id {
-                        let last_idx = count - 1;
-                        if i != last_idx {
-                            let last_key = (symbol_short!("ONFT"), owner.clone(), last_idx);
-                            if let Some(last_id) =
-                                env.storage().persistent().get::<_, u64>(&last_key)
-                            {
-                                env.storage().persistent().set(&entry_key, &last_id);
-                            }
-                            env.storage().persistent().remove(&last_key);
-                        } else {
-                            env.storage().persistent().remove(&entry_key);
-                        }
-                        found = true;
-                        break;
-                    }
-                }
-            }
+        env.events().publish(
+            (Symbol::new(&env, "NftBurned"), nft_id),
+            NftBurnedEvent {
+                nft_id,
+                hunt_id,
+                owner,
+            },
+        );
 
-            if found {
-                env.storage().persistent().set(&count_key, &(count - 1));
-            }
-            env.storage().persistent().remove(&exist_key);
-        }
-
-        env.events()
-            .publish((Symbol::new(&env, "NftBurned"), nft_id), (nft_id, owner));
+        Ok(())
+    }
+}

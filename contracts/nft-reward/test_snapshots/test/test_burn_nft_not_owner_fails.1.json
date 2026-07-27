@@ -1,9 +1,10 @@
 {
   "generators": {
-    "address": 4,
+    "address": 5,
     "nonce": 0
   },
   "auth": [
+    [],
     [],
     [],
     [],
@@ -217,7 +218,7 @@
                   "symbol": "HMNT"
                 },
                 {
-                  "u64": 42
+                  "u64": 1
                 }
               ]
             },
@@ -237,7 +238,7 @@
                       "symbol": "HMNT"
                     },
                     {
-                      "u64": 42
+                      "u64": 1
                     }
                   ]
                 },
@@ -260,7 +261,7 @@
                   "symbol": "HNFC"
                 },
                 {
-                  "u64": 42
+                  "u64": 1
                 }
               ]
             },
@@ -280,7 +281,7 @@
                       "symbol": "HNFC"
                     },
                     {
-                      "u64": 42
+                      "u64": 1
                     }
                   ]
                 },
@@ -305,7 +306,7 @@
                   "symbol": "HNFT"
                 },
                 {
-                  "u64": 42
+                  "u64": 1
                 },
                 {
                   "u32": 0
@@ -328,7 +329,7 @@
                       "symbol": "HNFT"
                     },
                     {
-                      "u64": 42
+                      "u64": 1
                     },
                     {
                       "u32": 0
@@ -356,7 +357,7 @@
                   "symbol": "HNFX"
                 },
                 {
-                  "u64": 42
+                  "u64": 1
                 },
                 {
                   "u64": 1
@@ -379,7 +380,7 @@
                       "symbol": "HNFX"
                     },
                     {
-                      "u64": 42
+                      "u64": 1
                     },
                     {
                       "u64": 1
@@ -490,7 +491,7 @@
                         "symbol": "hunt_id"
                       },
                       "val": {
-                        "u64": 42
+                        "u64": 1
                       }
                     },
                     {
@@ -635,7 +636,7 @@
                         "symbol": "description"
                       },
                       "val": {
-                        "string": "Completed legendary hunt"
+                        "string": "Someone else's NFT"
                       }
                     },
                     {
@@ -651,7 +652,7 @@
                         "symbol": "hunt_title"
                       },
                       "val": {
-                        "string": "Legendary City Hunt"
+                        "string": "Not Yours"
                       }
                     },
                     {
@@ -659,7 +660,7 @@
                         "symbol": "image_uri"
                       },
                       "val": {
-                        "string": "ipfs://trophy"
+                        "string": "ipfs://notyours"
                       }
                     },
                     {
@@ -667,7 +668,7 @@
                         "symbol": "rarity"
                       },
                       "val": {
-                        "u32": 4
+                        "u32": 0
                       }
                     },
                     {
@@ -681,7 +682,7 @@
                         "symbol": "tier"
                       },
                       "val": {
-                        "u32": 1
+                        "u32": 0
                       }
                     },
                     {
@@ -689,7 +690,7 @@
                         "symbol": "title"
                       },
                       "val": {
-                        "string": "Epic Hunt Trophy"
+                        "string": "Not Yours"
                       }
                     }
                   ]

@@ -1,5 +1,5 @@
 use crate::{NftData, NftCore, NftMetadata};
-use soroban_sdk::{symbol_short, Address, Env, Vec, Symbol};
+use soroban_sdk::{symbol_short, Address, Env, Vec};
 
 /// Storage layer for NFTs.
 pub struct Storage;
@@ -17,6 +17,12 @@ impl Storage {
     const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MNTR");
     const REWARD_MGR_KEY: soroban_sdk::Symbol = symbol_short!("RWDMGR");
     const HAS_AUTH_KEY: soroban_sdk::Symbol = symbol_short!("HAUTH");
+    const HUNT_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("HNFC");
+    const TOTAL_HUNTS_KEY: soroban_sdk::Symbol = symbol_short!("TH");
+    const TOTAL_OWNERS_KEY: soroban_sdk::Symbol = symbol_short!("TO");
+    const ALL_NFTS_KEY: soroban_sdk::Symbol = symbol_short!("ALLNFT");
+    const NFT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("NFTV");
+    const CONTRACT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("CTRV");
 
     fn nft_key(nft_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::NFT_KEY, nft_id)
@@ -66,9 +72,15 @@ impl Storage {
         (symbol_short!("AUTH"), contract.clone())
     }
 
-    pub fn remove_nft(env: &Env, nft_id: u64) {
-        let key = Self::nft_key(nft_id);
-        env.storage().persistent().remove(&key);
+    fn operator_key(
+        owner: &Address,
+        operator: &Address,
+    ) -> (soroban_sdk::Symbol, Address, Address) {
+        (symbol_short!("OP"), owner.clone(), operator.clone())
+    }
+
+    fn locker_key(locker: &Address) -> (soroban_sdk::Symbol, Address) {
+        (symbol_short!("LCK"), locker.clone())
     }
 
     pub fn save_admin(env: &Env, admin: &Address) {
@@ -405,6 +417,53 @@ impl Storage {
                     }
                     env.storage().persistent().set(&count_key, &(count - 1));
                     env.storage().persistent().remove(&exist_key);
+                    return;
+                }
+            }
+        }
+    }
+
+    pub fn remove_nft_from_owner(env: &Env, owner: &Address, nft_id: u64) {
+        let count_key = Self::owner_nft_count_key(owner);
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        let exist_key = Self::owner_nft_exist_key(owner, nft_id);
+        if !env.storage().persistent().has(&exist_key) {
+            return;
+        }
+
+        for i in 0..count {
+            let entry_key = Self::owner_nft_entry_key(owner, i);
+            if let Some(stored_id) = env.storage().persistent().get::<_, u64>(&entry_key) {
+                if stored_id == nft_id {
+                    let last_idx = count - 1;
+                    if i != last_idx {
+                        let last_key = Self::owner_nft_entry_key(owner, last_idx);
+                        if let Some(last_id) =
+                            env.storage().persistent().get::<_, u64>(&last_key)
+                        {
+                            env.storage().persistent().set(&entry_key, &last_id);
+                        }
+                        env.storage().persistent().remove(&last_key);
+                    } else {
+                        env.storage().persistent().remove(&entry_key);
+                    }
+                    env.storage().persistent().set(&count_key, &(count - 1));
+                    env.storage().persistent().remove(&exist_key);
+
+                    // Decrement total owners if owner's count drops to 0
+                    if count == 1 {
+                        let current_total: u64 = env
+                            .storage()
+                            .persistent()
+                            .get(&Self::TOTAL_OWNERS_KEY)
+                            .unwrap_or(0);
+                        if current_total > 0 {
+                            env
+                                .storage()
+                                .persistent()
+                                .set(&Self::TOTAL_OWNERS_KEY, &(current_total - 1));
+                        }
+                    }
                     return;
                 }
             }

@@ -1,7 +1,10 @@
 use crate::storage::Storage;
 use crate::METADATA_SCHEMA_VERSION;
-use hunty_migration::{MigrationFramework, UpgradeAuthError, UpgradeAuthorization};
-use soroban_sdk::{Address, Env};
+use hunty_migration::{
+    MigrationFramework, UpgradeAuthError, UpgradeAuthorization, UpgradeExecutedEvent,
+    UpgradeHistoryEntry, UpgradeProposal, UpgradeProposedEvent,
+};
+use soroban_sdk::{Address, Env, Symbol};
 
 pub use hunty_migration::MigrationReport;
 
