@@ -30,6 +30,7 @@ bindings: build
 check:
 	cargo fmt --all -- --check
 	cargo clippy --workspace -- -D warnings
+	cargo test --workspace --locked
 
 setup-githooks:
 	git config core.hooksPath .githooks
