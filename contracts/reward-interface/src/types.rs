@@ -54,6 +54,11 @@ pub struct RewardPoolConfig {
     pub min_distribution_interval_secs: u64,
     /// Distribution mode (Fixed or Proportional).
     pub distribution_mode: DistributionMode,
+    /// Optional vesting period in seconds. When > 0, XLM rewards are not
+    /// transferred immediately at distribution time. Instead, a `VestingRecord`
+    /// is created and the player must call `claim_vested` to receive tokens
+    /// proportionally as time elapses. 0 means vesting is disabled (instant payout).
+    pub vesting_period_secs: u64,
 }
 
 /// How rewards are calculated from the pool at distribution time.
