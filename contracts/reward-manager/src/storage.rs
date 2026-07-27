@@ -4,7 +4,6 @@ use crate::types::{
     DistributionRecord, PoolAuditEntry, PoolDistribution, ResolutionStatus, RewardPoolConfig,
 };
 
-use crate::types::{DistributionRecord, PoolAuditEntry, ResolutionStatus, RewardPoolConfig};
 pub struct Storage;
 
 #[allow(dead_code)]
@@ -13,16 +12,8 @@ impl Storage {
     const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMI");
     const XLM_TOKEN_KEY: soroban_sdk::Symbol = symbol_short!("X");
     const NFT_CONTRACT_KEY: soroban_sdk::Symbol = symbol_short!("NFTA");
-    // Audit log
-    const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ACNT");
-    const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("ALOG");
     /// Ring-buffer capacity for the per-pool audit log.
     const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 50;
-    // Pause / emergency state
-    const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSED");
-    const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
-    // Pending NFT mints (for retry)
-    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
     // Daily spending caps
     const DAILY_POOL_CAP_KEY: soroban_sdk::Symbol = symbol_short!("DPC");
     const DAILY_GLOBAL_CAP_KEY: soroban_sdk::Symbol = symbol_short!("DGR");
@@ -42,13 +33,6 @@ impl Storage {
     const POOL_DIST_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("PDCNT");
     const POOL_LAST_DIST_TS_KEY: soroban_sdk::Symbol = symbol_short!("PLDTS");
     const POOL_DISTRIBUTIONS_KEY: soroban_sdk::Symbol = symbol_short!("PLDIST");
-    const HUNTY_CORE_KEY: soroban_sdk::Symbol = symbol_short!("HCORE");
-    const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ACT");
-    const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 1000;
-    const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("AL");
-    const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUS");
-    const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("ELOG");
-    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
     const TOTAL_XLM_DST_KEY: soroban_sdk::Symbol = symbol_short!("TXDST");
     const HUNTY_CORE_KEY: soroban_sdk::Symbol = symbol_short!("HCORE");
     const IN_DISTRIBUTION_KEY: soroban_sdk::Symbol = symbol_short!("IN_DIST");
@@ -58,7 +42,6 @@ impl Storage {
     const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
     const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
     const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
-    const MAX_AUDIT_ENTRIES_PER_POOL: u64 = 50;
 
     // ========== Admin ==========
 

@@ -14,9 +14,6 @@ impl Storage {
     const OWNER_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ONFC");
     const MAX_SUPPLY_KEY: soroban_sdk::Symbol = symbol_short!("MAXS");
     const INITIALIZED_KEY: soroban_sdk::Symbol = symbol_short!("INIT");
-    const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMN");
-    const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MNTR");
-    const REWARD_MGR_KEY: soroban_sdk::Symbol = symbol_short!("RWMG");
     const COLLECTION_METADATA_KEY: soroban_sdk::Symbol = symbol_short!("COLL");
     const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMIN");
     const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MNTR");
@@ -92,6 +89,8 @@ impl Storage {
     pub fn is_initialized(env: &Env) -> bool {
         env.storage().instance().has(&Self::INITIALIZED_KEY)
             || env.storage().persistent().has(&Self::INITIALIZED_KEY)
+    }
+
     pub fn remove_nft(env: &Env, nft_id: u64) {
         let key = Self::nft_key(nft_id);
         env.storage().persistent().remove(&key);
@@ -107,21 +106,16 @@ impl Storage {
 
     // --- Reward Manager ---
 
-    pub fn save_reward_manager(env: &Env, reward_mgr: &Address) {
-        env.storage().instance().set(&Self::REWARD_MGR_KEY, reward_mgr);
-    }
-
-    pub fn get_reward_manager(env: &Env) -> Option<Address> {
-        env.storage().instance().get(&Self::REWARD_MGR_KEY)
-    }
-
-    // --- Max supply ---
     pub fn set_reward_manager(env: &Env, address: &Address) {
         env.storage().instance().set(&Self::REWARD_MGR_KEY, address);
     }
 
     pub fn save_reward_manager(env: &Env, address: &Address) {
         env.storage().instance().set(&Self::REWARD_MGR_KEY, address);
+    }
+
+    pub fn get_reward_manager(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&Self::REWARD_MGR_KEY)
     }
 
     pub fn get_max_supply(env: &Env) -> Option<u64> {
@@ -133,8 +127,6 @@ impl Storage {
             .persistent()
             .get::<_, Option<u64>>(&Self::MAX_SUPPLY_KEY)
             .unwrap_or(None)
-    pub fn get_reward_manager(env: &Env) -> Option<Address> {
-        env.storage().instance().get(&Self::REWARD_MGR_KEY)
     }
 
     // --- Minter whitelist (reserved for admin-gated minting) ---

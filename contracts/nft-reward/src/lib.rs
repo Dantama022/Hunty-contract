@@ -60,25 +60,7 @@ pub struct NftCollectionStats {
 
 fn image_uri_is_valid(uri: &String) -> bool {
     // Accept non-empty URIs that start with https:// or ipfs://
-    // soroban_sdk::String has no as_str(); compare via byte-level checks.
-    let len = uri.len();
-    if len == 0 {
-        return false;
-    }
-    // Build byte slices for the prefixes and compare the leading bytes.
-    let https_prefix = b"https://";
-    let ipfs_prefix = b"ipfs://";
-    // Copy up to 8 bytes from the Soroban String into a local buffer.
-    let check_len: u32 = if len >= 8 { 8 } else { len };
-    let mut buf = [0u8; 8];
-    uri.copy_into_slice(&mut buf[..check_len as usize]);
-    let prefix8 = &buf[..check_len as usize];
-    if check_len >= 8 && prefix8 == https_prefix {
-        return true;
-    }
-    let check_len7: u32 = if len >= 7 { 7 } else { len };
-    let prefix7 = &buf[..check_len7 as usize];
-    check_len7 >= 7 && prefix7 == ipfs_prefix
+    // soroban_sdk::String has no as_str(); compare via UTF-8 text when possible.
     let len = uri.len();
     if len == 0 || len > 200 {
         return false;
