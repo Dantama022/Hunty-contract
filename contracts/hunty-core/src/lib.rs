@@ -482,7 +482,10 @@ impl HuntyCore {
             weight,
         )?;
         let mut updated = hunt;
-        Self::sync_hunt_clue_counts(&env, hunt_id, &mut updated);
+        updated.total_clues += 1;
+        if is_required {
+            updated.required_clues += 1;
+        }
         Storage::save_hunt(&env, &updated);
 
         Ok(clue_id)
@@ -512,6 +515,7 @@ impl HuntyCore {
         }
 
         let mut clue_ids = Vec::new(&env);
+        let mut batch_required = 0u32;
         for i in 0..clues.len() {
             let clue = clues.get(i).unwrap();
             let clue_id = Self::insert_clue(
@@ -526,10 +530,14 @@ impl HuntyCore {
                 None, // weight defaults to 1 in insert_clue
             )?;
             clue_ids.push_back(clue_id);
+            if clue.is_required {
+                batch_required += 1;
+            }
         }
 
         let mut updated = hunt;
-        Self::sync_hunt_clue_counts(&env, hunt_id, &mut updated);
+        updated.total_clues += clues.len();
+        updated.required_clues += batch_required;
         Storage::save_hunt(&env, &updated);
 
         Ok(clue_ids)
@@ -3275,34 +3283,20 @@ impl HuntyCore {
         monitoring::Monitoring::health_dashboard(&env)
     }
 
-    fn sync_hunt_clue_counts(env: &Env, hunt_id: u64, hunt: &mut Hunt) {
+    #[cfg(debug_assertions)]
+    fn sync_hunt_clue_counts(env: &Env, hunt_id: u64, hunt: &Hunt) {
         let clues = Storage::list_clues_for_hunt(env, hunt_id, 0, u32::MAX);
         let mut total = 0u32;
         let mut required = 0u32;
         for i in 0..clues.len() {
             let clue = clues.get(i).unwrap();
-            total = total.saturating_add(1);
+            total += 1;
             if clue.is_required {
-                required = required.saturating_add(1);
+                required += 1;
             }
         }
-        hunt.total_clues = total;
-        hunt.required_clues = required;
-    }
-
-    fn sync_reward_pool_balance(env: &Env, hunt_id: u64, hunt: &mut Hunt) {
-        if let Some(reward_manager_addr) = Storage::get_reward_manager(env) {
-            let mut balance_args: Vec<Val> = Vec::new(env);
-            balance_args.push_back(hunt_id.into_val(env));
-
-            if let Ok(Ok(pool_balance)) = env.try_invoke_contract::<i128, RewardErrorCode>(
-                &reward_manager_addr,
-                &Symbol::new(env, "get_pool_balance"),
-                balance_args,
-            ) {
-                hunt.reward_config.xlm_pool = pool_balance;
-            }
-        }
+        assert_eq!(hunt.total_clues, total, "total_clues drifted for hunt {hunt_id}");
+        assert_eq!(hunt.required_clues, required, "required_clues drifted for hunt {hunt_id}");
     }
 }
 
