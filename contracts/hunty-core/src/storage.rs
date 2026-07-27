@@ -481,11 +481,6 @@ impl Storage {
             .map(|h| h.activated_at)
             .unwrap_or(0);
         env.storage().persistent().set(&key, &progress.to_stored(activated_at));
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
-        env.storage().persistent().set(&key, progress);
-        env.storage().persistent().set(&key, &progress.to_stored());
         let policy = if progress.is_completed || progress.reward_claimed {
             TtlPolicy::Short
         } else {
