@@ -2,12 +2,25 @@ import express from 'express';
 import { MintRateLimiter } from './rateLimiter';
 import { MintRateLimitError } from './errors';
 import { loadConfig, publicConfig } from './config';
+import { createMintStore } from './mintStore';
 
 const app = express();
 app.use(express.json());
 
 const config = loadConfig();
-const limiter = new MintRateLimiter(config.rateLimit, config.adminSecret);
+
+let limiter: MintRateLimiter;
+
+async function bootstrap(): Promise<void> {
+  const store = await createMintStore(config.redisUrl);
+  limiter = new MintRateLimiter(config.rateLimit, config.adminSecret, store);
+
+  app.listen(config.port, () => {
+    console.log(
+      `Mint rate limiter API running on port ${config.port} (${config.environment}) with Redis-backed shared state`,
+    );
+  });
+}
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', ...publicConfig(config) });
@@ -30,15 +43,15 @@ app.get('/environment', (_req, res) => {
 </html>`);
 });
 
-app.post('/mint', (req, res) => {
+app.post('/mint', async (req, res) => {
   const { address } = req.body;
   if (!address || typeof address !== 'string') {
     res.status(400).json({ error: 'address is required' });
     return;
   }
   try {
-    limiter.mint(address);
-    res.json({ minted: true, mintsInWindow: limiter.getMintCount(address) });
+    await limiter.mint(address);
+    res.json({ minted: true, mintsInWindow: await limiter.getMintCount(address) });
   } catch (err) {
     if (err instanceof MintRateLimitError) {
       res.status(429).json({
@@ -51,8 +64,8 @@ app.post('/mint', (req, res) => {
   }
 });
 
-app.get('/mint/count/:address', (req, res) => {
-  const count = limiter.getMintCount(req.params.address);
+app.get('/mint/count/:address', async (req, res) => {
+  const count = await limiter.getMintCount(req.params.address);
   res.json({ address: req.params.address, mintsInWindow: count });
 });
 
@@ -79,8 +92,12 @@ app.patch('/admin/config', (req, res) => {
   }
 });
 
-app.listen(config.port, () => {
-  console.log(`Mint rate limiter API running on port ${config.port} (${config.environment})`);
+void bootstrap().catch((err) => {
+  console.error('Failed to start mint rate limiter API:', err);
+  process.exit(1);
 });
 
-export { app, limiter, config };
+export { app, config };
+export function getLimiter(): MintRateLimiter {
+  return limiter;
+}
