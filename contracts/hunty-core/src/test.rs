@@ -1,4 +1,4 @@
-﻿use crate::HuntyCore;
+use crate::HuntyCore;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, String};
 
@@ -7826,5 +7826,27 @@ mod test {
         assert_eq!(restored.completed_clues.get(1).unwrap(), 2);
         assert_eq!(restored.clue_attempts.get(1).unwrap(), 3);
         assert_eq!(restored.clue_attempts.get(2).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_try_get_player_progress_corrupt_data() {
+        let env = Env::default();
+        let player = Address::generate(&env);
+        let hunt_id = 1u64;
+        let key = Storage::progress_key(hunt_id, &player);
+
+        // Store corrupt data bytes in progress key that cannot be deserialized as StoredPlayerProgress
+        let corrupt_val = soroban_sdk::Symbol::new(&env, "corrupt_data").into_val(&env);
+        env.storage().persistent().set(&key, &corrupt_val);
+
+        let result = Storage::try_get_player_progress(&env, hunt_id, &player);
+        assert!(result.is_err());
+        match result {
+            Err(HuntError::CorruptPlayerProgress { hunt_id: err_hunt_id, player: err_player }) => {
+                assert_eq!(err_hunt_id, hunt_id);
+                assert_eq!(err_player, player);
+            }
+            _ => panic!("Expected CorruptPlayerProgress error"),
+        }
     }
 }
