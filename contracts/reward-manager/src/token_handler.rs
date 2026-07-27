@@ -1,19 +1,19 @@
-use soroban_sdk::{token, Address, Env};
 use crate::errors::RewardErrorCode;
+use soroban_sdk::{token, Address, Env};
 
 pub struct TokenHandler;
 
 impl TokenHandler {
     /// Validates that the given address is a SAC-compatible token contract.
-    /// 
+    ///
     /// Verifies that the contract implements the standard token interface by
     /// attempting to query the balance method. This is a lightweight check
     /// that confirms basic SAC compatibility.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `token_address` - Address of the token contract to validate
-    /// 
+    ///
     /// # Returns
     /// * `Ok(())` if the token contract is valid
     /// * `Err(RewardErrorCode::InvalidTokenContract)` if validation fails
@@ -25,7 +25,7 @@ impl TokenHandler {
         // This verifies the contract implements the SAC token interface
         let client = token::Client::new(env, token_address);
         let contract_addr = env.current_contract_address();
-        
+
         // Attempt to query balance - this will panic if not a valid token contract
         // We use a simple try-catch pattern by checking if we can instantiate the client
         // and the contract responds to the balance method
@@ -40,7 +40,7 @@ impl TokenHandler {
     /// Uses the Soroban token interface (SAC) to execute the transfer.
     /// The contract must have sufficient balance and must have authorized
     /// the transfer (handled automatically when called from within the contract).
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `token_address` - Address of the token contract
@@ -59,13 +59,13 @@ impl TokenHandler {
     }
 
     /// Checks if the contract holds enough tokens for the required amount.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `token_address` - Address of the token contract
     /// * `contract_addr` - Address of this contract
     /// * `required` - Required amount to validate
-    /// 
+    ///
     /// # Returns
     /// * `true` if the contract has sufficient balance
     /// * `false` otherwise
@@ -81,12 +81,12 @@ impl TokenHandler {
     }
 
     /// Returns the contract's current token balance.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `token_address` - Address of the token contract
     /// * `contract_addr` - Address of this contract
-    /// 
+    ///
     /// # Returns
     /// The current token balance
     #[allow(dead_code)]

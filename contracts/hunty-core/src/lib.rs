@@ -2,22 +2,17 @@
 use crate::errors::{HuntError, HuntErrorCode};
 use crate::storage::{HuntCache, Storage};
 use crate::types::{
-    AnswerIncorrectEvent, BatchClueInput, Clue, ClueAddedEvent, ClueCompletedEvent, ClueInfo,
-    ClueRemovedEvent, Hunt, HuntActivatedEvent, HuntCancelledEvent, HuntCompletedEvent,
-    HuntCreatedEvent, HuntDeactivatedEvent, HuntStatistics, HuntStatus, LeaderboardEntry,
-    PlayerProgress, PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, TimeBonusConfig,
-    AnswerIncorrectEvent, Clue, ClueAddedEvent, ClueAliasesAddedEvent, ClueCompletedEvent,
-    ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt, HuntActivatedEvent,
-    HuntArchivedEvent, HuntCache, HuntCancelledEvent, HuntClosedEvent, HuntCompletedEvent,
-    HuntCreatedEvent,
-    HuntDeactivatedEvent, HuntDescriptionUpdatedEvent, HuntReactivatedEvent, HuntStatistics,
-    HuntStatus, HuntStatusChangedEvent, LeaderboardEntry, LeaderboardIndexEntry, PlayerProgress,
-    PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, RewardManagerSetEvent,
+    AnswerIncorrectEvent, BatchClueInput, Clue, ClueAddedEvent, ClueAliasesAddedEvent,
+    ClueCompletedEvent, ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt,
+    HuntActivatedEvent, HuntArchivedEvent, HuntCancelledEvent, HuntClosedEvent, HuntCompletedEvent,
+    HuntCreatedEvent, HuntDeactivatedEvent, HuntDescriptionUpdatedEvent, HuntReactivatedEvent,
+    HuntStatistics, HuntStatus, HuntStatusChangedEvent, LeaderboardEntry, LeaderboardIndexEntry,
+    PlayerProgress, PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, RewardManagerSetEvent,
     TimeBonusConfig,
 };
 use reward_interface::RewardErrorCode;
 use soroban_sdk::{
-    contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, String, Symbol, Val, Vec,
+    contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, Val, Vec,
 };
 
 const MAX_TITLE_BYTES: u32 = 200;
@@ -568,8 +563,11 @@ impl HuntyCore {
             points
         };
 
+        if points == 0 {
+            return Err(HuntErrorCode::InvalidPoints);
+        }
         let question = crate::sanitization::StringSanitizer::sanitize(
-            &env,
+            env,
             &question,
             MAX_QUESTION_LENGTH,
             false,
@@ -589,6 +587,13 @@ impl HuntyCore {
         let mut answer_hashes = Vec::new(&env);
         answer_hashes.push_back(answer_hash);
         
+        let answer_hash =
+            Self::normalize_and_hash_answer(env, &answer).map_err(HuntErrorCode::from)?;
+        let clue_id = Storage::next_clue_id(env, hunt_id);
+        let mut answer_hashes: Vec<BytesN<32>> = Vec::new(env);
+        answer_hashes.push_back(answer_hash);
+        let difficulty_u32 = difficulty as u32;
+        let weight = 1u32;
         let clue = Clue {
             clue_id,
             question: question.clone(),
@@ -604,6 +609,13 @@ impl HuntyCore {
         Storage::save_clue(&env, hunt_id, &clue);
         
         let mut updated = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
+            difficulty: difficulty_u32,
+            weight,
+            hint: None,
+            hint_penalty_points: 0,
+        };
+        Storage::save_clue(env, hunt_id, &clue);
+        let mut updated = Storage::get_hunt_or_error(env, hunt_id).map_err(HuntErrorCode::from)?;
         updated.total_clues += 1;
         if is_required {
             updated.required_clues += 1;
@@ -611,15 +623,19 @@ impl HuntyCore {
         Self::recalculate_hunt_difficulty(&env, hunt_id, &mut updated);
         Storage::save_hunt(&env, &updated);
         
+        Self::recalculate_hunt_difficulty(env, hunt_id, &mut updated);
+        Storage::save_hunt(env, &updated);
         let event = ClueAddedEvent {
             hunt_id,
             clue_id,
-            creator: updated.creator.clone(),
+            creator: creator.clone(),
             question,
             points: final_points,
             is_required,
             difficulty: difficulty_val,
             weight: weight_val,
+            difficulty: difficulty_u32,
+            weight,
         };
         env.events()
             .publish((Symbol::new(env, "ClueAdded"), hunt_id, clue_id), event);
@@ -1341,6 +1357,8 @@ impl HuntyCore {
         }
 
         // Cannot cancel a completed hunt
+
+        // Cannot cancel a completed or already-cancelled hunt
         if cache.status == HuntStatus::Completed {
             return Err(HuntErrorCode::InvalidHuntStatus);
         }

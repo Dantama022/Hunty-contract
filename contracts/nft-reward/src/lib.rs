@@ -1,9 +1,8 @@
 #![cfg_attr(not(test), no_std)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Map,
-    String, Symbol, Val, Vec,
-    contract, contractimpl, contracttype, panic_with_error, Address, Env, Map, String, Symbol,
-    Val, Vec, symbol_short,
+    contract, contract, contractimpl, contractimpl, contracttype, contracttype, panic_with_error,
+    panic_with_error, symbol_short, symbol_short, Address, Address, Env, Env, Map, Map, String,
+    String, Symbol, Symbol, Val, Val, Vec, Vec,
 };
 
 const MAX_URI_LEN: usize = 512;
@@ -60,25 +59,7 @@ pub struct NftCollectionStats {
 
 fn image_uri_is_valid(uri: &String) -> bool {
     // Accept non-empty URIs that start with https:// or ipfs://
-    // soroban_sdk::String has no as_str(); compare via byte-level checks.
-    let len = uri.len();
-    if len == 0 {
-        return false;
-    }
-    // Build byte slices for the prefixes and compare the leading bytes.
-    let https_prefix = b"https://";
-    let ipfs_prefix = b"ipfs://";
-    // Copy up to 8 bytes from the Soroban String into a local buffer.
-    let check_len: u32 = if len >= 8 { 8 } else { len };
-    let mut buf = [0u8; 8];
-    uri.copy_into_slice(&mut buf[..check_len as usize]);
-    let prefix8 = &buf[..check_len as usize];
-    if check_len >= 8 && prefix8 == https_prefix {
-        return true;
-    }
-    let check_len7: u32 = if len >= 7 { 7 } else { len };
-    let prefix7 = &buf[..check_len7 as usize];
-    check_len7 >= 7 && prefix7 == ipfs_prefix
+    // soroban_sdk::String has no as_str(); compare via UTF-8 text when possible.
     let len = uri.len();
     if len == 0 || len > 200 {
         return false;
@@ -552,8 +533,8 @@ impl NftReward {
     ) -> Result<(), crate::errors::NftErrorCode> {
         owner.require_auth();
 
-        let mut nft = Storage::get_nft(&env, nft_id)
-            .ok_or(crate::errors::NftErrorCode::NftNotFound)?;
+        let mut nft =
+            Storage::get_nft(&env, nft_id).ok_or(crate::errors::NftErrorCode::NftNotFound)?;
 
         if nft.owner != owner {
             return Err(crate::errors::NftErrorCode::NotOwner);
@@ -569,7 +550,7 @@ impl NftReward {
 
         // Check if key already exists
         let key_exists = nft.metadata.extensions.contains_key(key.clone());
-        
+
         if !key_exists && nft.metadata.extensions.len() >= MAX_EXTENSION_FIELDS {
             return Err(crate::errors::NftErrorCode::TooManyExtensions);
         }
@@ -628,8 +609,8 @@ impl NftReward {
     ) -> Result<(), crate::errors::NftErrorCode> {
         owner.require_auth();
 
-        let mut nft = Storage::get_nft(&env, nft_id)
-            .ok_or(crate::errors::NftErrorCode::NftNotFound)?;
+        let mut nft =
+            Storage::get_nft(&env, nft_id).ok_or(crate::errors::NftErrorCode::NftNotFound)?;
 
         if nft.owner != owner {
             return Err(crate::errors::NftErrorCode::NotOwner);
@@ -718,12 +699,9 @@ impl NftReward {
 
         for nft_id in all_ids.iter() {
             if let Some(mut nft) = Storage::get_nft(&env, nft_id) {
-                if let Some(new_uri) = Self::replace_prefix(
-                    &env,
-                    &nft.metadata.image_uri,
-                    &old_prefix,
-                    &new_prefix,
-                ) {
+                if let Some(new_uri) =
+                    Self::replace_prefix(&env, &nft.metadata.image_uri, &old_prefix, &new_prefix)
+                {
                     nft.metadata.image_uri = new_uri;
                     Storage::save_nft(&env, &nft);
                     updated += 1;
@@ -796,12 +774,8 @@ impl NftReward {
             return Err(crate::errors::NftErrorCode::NotOwner);
         }
 
-        let new_description = Self::sanitize_metadata_field(
-            &env,
-            &new_description,
-            MAX_NFT_DESCRIPTION_BYTES,
-            true,
-        );
+        let new_description =
+            Self::sanitize_metadata_field(&env, &new_description, MAX_NFT_DESCRIPTION_BYTES, true);
         let new_image_uri =
             Self::sanitize_metadata_field(&env, &new_image_uri, MAX_NFT_URI_BYTES, true);
 
@@ -1072,7 +1046,8 @@ impl NftReward {
     ) -> Result<(), crate::errors::NftErrorCode> {
         caller.require_auth();
 
-        let mut nft = Storage::get_nft(&env, nft_id).ok_or(crate::errors::NftErrorCode::NftNotFound)?;
+        let mut nft =
+            Storage::get_nft(&env, nft_id).ok_or(crate::errors::NftErrorCode::NftNotFound)?;
 
         if nft.locked {
             return Err(crate::errors::NftErrorCode::NftLocked);

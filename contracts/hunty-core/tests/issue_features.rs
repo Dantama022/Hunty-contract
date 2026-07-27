@@ -48,7 +48,15 @@ fn setup_hunt(env: &Env, end_time: Option<u64>) -> (HuntyCoreClient<'_>, Address
     (client, creator, hunt_id)
 }
 
-fn submit(client: &HuntyCoreClient, env: &Env, hunt_id: u64, clue_id: u32, player: &Address, answer: &str, nonce: u64) {
+fn submit(
+    client: &HuntyCoreClient,
+    env: &Env,
+    hunt_id: u64,
+    clue_id: u32,
+    player: &Address,
+    answer: &str,
+    nonce: u64,
+) {
     client.submit_answer(
         &hunt_id,
         &clue_id,
@@ -171,7 +179,10 @@ fn test_partial_score_claim() {
         .get_player_progress(&hunt_id, &partial_player)
         .total_score;
     assert!(expected > 0);
-    assert_eq!(client.claim_partial_score(&hunt_id, &partial_player), expected);
+    assert_eq!(
+        client.claim_partial_score(&hunt_id, &partial_player),
+        expected
+    );
 
     // Double-claim is rejected
     assert!(client
@@ -179,7 +190,9 @@ fn test_partial_score_claim() {
         .is_err());
 
     // Fully-completed players cannot claim a partial score
-    assert!(client.try_claim_partial_score(&hunt_id, &full_player).is_err());
+    assert!(client
+        .try_claim_partial_score(&hunt_id, &full_player)
+        .is_err());
 }
 
 #[test]

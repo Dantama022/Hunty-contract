@@ -207,6 +207,8 @@ pub struct StoredPlayerProgress {
     /// BIT1 (2): reward_claimed
     /// BIT2–BIT31: reserved for future use
     pub flags: u32,
+    /// BIT2–BIT7: reserved for future use
+    pub flags: u8,
     pub recent_submissions: Vec<u64>,
     pub clue_last_attempts: Map<u32, u64>,
 }
@@ -223,6 +225,7 @@ pub struct PlayerProgress {
     pub completed_clue_index: Map<u32, bool>,
     pub hinted_clues: Vec<u32>,
     pub total_score: u32,
+    pub required_completed_count: u32,
     pub started_at: u64,
     pub completed_at: u64,
     pub is_completed: bool,
@@ -240,6 +243,7 @@ impl PlayerProgress {
             completed_clue_index: Map::new(env),
             hinted_clues: Vec::new(env),
             total_score: 0,
+            required_completed_count: 0,
             started_at: current_time,
             completed_at: 0,
             is_completed: false,
@@ -247,6 +251,18 @@ impl PlayerProgress {
             recent_submissions: Vec::new(env),
             clue_last_attempts: Map::new(env),
         }
+    }
+
+    /// Pack boolean flags into a single byte
+    fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u8 {
+        let mut flags = 0u8;
+        if is_completed {
+            flags |= 0x01;
+        }
+        if reward_claimed {
+            flags |= 0x02;
+        }
+        flags
     }
 
     /// Convert to the compact form stored on-chain (drops redundant key fields).
@@ -277,11 +293,11 @@ impl PlayerProgress {
             started_at_delta,
             completed_at_delta,
             flags,
+            flags: Self::bools_to_flags(self.is_completed, self.reward_claimed),
             recent_submissions: self.recent_submissions.clone(),
             clue_last_attempts: self.clue_last_attempts.clone(),
         }
     }
-
 
     /// Reconstruct from stored form plus the key fields.
     ///
@@ -300,7 +316,6 @@ impl PlayerProgress {
             completed_clue_index.set(clue_id, true);
         }
 
-        // Reconstruct absolute timestamps from deltas.
         let started_at = activated_at + (stored.started_at_delta as u64);
         let completed_at = if stored.completed_at_delta == 0 {
             0u64
