@@ -6,7 +6,7 @@ use crate::types::{
     ClueCompletedEvent, ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt,
     HuntActivatedEvent, HuntArchivedEvent, HuntCancelledEvent, HuntClosedEvent, HuntCompletedEvent,
     HuntCreatedEvent, HuntDeactivatedEvent, HuntDescriptionUpdatedEvent, HuntReactivatedEvent,
-    HuntStatistics, HuntStatus, HuntStatusChangedEvent, LeaderboardEntry, LeaderboardIndexEntry,
+    HuntStatistics, HuntStatus, HuntStatusChangedEvent, LeaderboardEntry, LeaderboardIndexEntry, LeaderboardResult,
     PlayerProgress, PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, RewardManagerSetEvent,
     TimeBonusConfig,
 };
@@ -2764,9 +2764,10 @@ impl HuntyCore {
         env: Env,
         hunt_id: u64,
         limit: u32,
-    ) -> Result<Vec<LeaderboardEntry>, HuntErrorCode> {
+    ) -> Result<LeaderboardResult, HuntErrorCode> {
         // Cache existence check (cheaper than loading full Hunt)
         Storage::get_hunt_cache(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+        let total_players = Storage::get_hunt_players(&env, hunt_id).len();
         let effective_limit = core::cmp::min(limit, MAX_LEADERBOARD_SIZE);
         let entries = Storage::get_leaderboard_index(&env, hunt_id);
         let mut result = Vec::new(&env);
@@ -2782,7 +2783,12 @@ impl HuntyCore {
             });
         }
 
-        Ok(result)
+        let truncated = entries.len() < total_players;
+        Ok(LeaderboardResult {
+            entries: result,
+            total_players,
+            truncated,
+        })
     }
 
     /// Scans a bounded window of registered players for a hunt and returns
