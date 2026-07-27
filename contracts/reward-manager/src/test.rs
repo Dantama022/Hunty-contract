@@ -994,9 +994,15 @@ mod test {
                 1,
                 &crate::types::RewardPoolConfig {
                     creator: creator.clone(),
+                    delegates: Vec::new(&env),
                     min_distribution_amount: 0,
                     time_based_tiers: Vec::new(&env),
                     frozen: false,
+                    token_address: token_address.clone(),
+                    nft_contract: None,
+                    target_amount: 0,
+                    min_distribution_interval_secs: 0,
+                    distribution_mode: crate::types::DistributionMode::Fixed,
                 },
             );
             let _ = RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 10_000_000);

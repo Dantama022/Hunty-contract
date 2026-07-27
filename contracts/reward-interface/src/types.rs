@@ -37,6 +37,8 @@ impl RewardConfig {
 pub struct RewardPoolConfig {
     /// Address of the hunt creator who owns this pool.
     pub creator: Address,
+    /// Addresses allowed to distribute rewards for this pool.
+    pub delegates: Vec<Address>,
     /// Minimum XLM amount per distribution. 0 means no minimum enforced.
     pub min_distribution_amount: i128,
     /// Optional time-based reward tiers. When empty, the per-winner amount
