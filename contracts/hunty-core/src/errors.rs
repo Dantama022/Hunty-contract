@@ -50,6 +50,7 @@ pub enum HuntErrorCode {
     TooManyCategories = 43,
     InvalidCategory = 44,
     InvalidDifficulty = 45,
+    CorruptPlayerProgress = 46,
 }
 
 #[derive(Debug)]
@@ -155,6 +156,10 @@ pub enum HuntError {
     InvalidCategory,
     InvalidDifficulty {
         value: u32,
+    },
+    CorruptPlayerProgress {
+        hunt_id: u64,
+        player: soroban_sdk::Address,
     },
 }
 
@@ -323,6 +328,9 @@ impl fmt::Display for HuntError {
             HuntError::InvalidDifficulty { value } => {
                 write!(f, "Invalid difficulty value: {}", value)
             }
+            HuntError::CorruptPlayerProgress { hunt_id, player } => {
+                write!(f, "Corrupt player progress record for hunt {} player {:?}", hunt_id, player)
+            }
         }
     }
 }
@@ -373,6 +381,7 @@ impl From<HuntError> for HuntErrorCode {
             HuntError::TooManyCategories { .. } => HuntErrorCode::TooManyCategories,
             HuntError::InvalidCategory => HuntErrorCode::InvalidCategory,
             HuntError::InvalidDifficulty { .. } => HuntErrorCode::InvalidDifficulty,
+            HuntError::CorruptPlayerProgress { .. } => HuntErrorCode::CorruptPlayerProgress,
         }
     }
 }

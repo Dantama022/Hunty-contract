@@ -505,25 +505,65 @@ impl Storage {
     ///
     /// # Returns
     /// * `Some(PlayerProgress)` if progress exists, `None` otherwise
+    /// Safely attempts to retrieve and deserialize player progress.
+    /// Returns `Ok(None)` if not registered, `Ok(Some(progress))` if successful,
+    /// or `Err(HuntError::CorruptPlayerProgress)` if storage deserialization fails.
+    pub fn try_get_player_progress(
+        env: &Env,
+        hunt_id: u64,
+        player: &Address,
+    ) -> Result<Option<PlayerProgress>, HuntError> {
+        let key = Self::progress_key(hunt_id, player);
+        let activated_at = Self::get_hunt(env, hunt_id)
+            .map(|h| h.activated_at)
+            .unwrap_or(0);
+        let raw_val: Option<Val> = env.storage().persistent().get(&key);
+        let val = match raw_val {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        if let Ok(stored) = StoredPlayerProgress::try_from_val(env, &val) {
+            return Ok(Some(PlayerProgress::from_stored(
+                env,
+                stored,
+                player.clone(),
+                hunt_id,
+                activated_at,
+            )));
+        }
+
+        if let Ok(bytes) = soroban_sdk::Bytes::try_from_val(env, &val) {
+            if let Ok(stored) = StoredPlayerProgress::from_xdr(env, &bytes) {
+                return Ok(Some(PlayerProgress::from_stored(
+                    env,
+                    stored,
+                    player.clone(),
+                    hunt_id,
+                    activated_at,
+                )));
+            }
+        }
+
+        Err(HuntError::CorruptPlayerProgress {
+            hunt_id,
+            player: player.clone(),
+        })
+    }
+
+    /// Retrieves player progress as an Option.
+    /// Returns `None` if not registered or if progress entry is corrupt.
     pub fn get_player_progress(
         env: &Env,
         hunt_id: u64,
         player: &Address,
     ) -> Option<PlayerProgress> {
-        let key = Self::progress_key(hunt_id, player);
-        let activated_at = Self::get_hunt(env, hunt_id)
-            .map(|h| h.activated_at)
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .get::<_, StoredPlayerProgress>(&key)
-            .map(|stored| PlayerProgress::from_stored(env, stored, player.clone(), hunt_id, activated_at))
-            .map(|stored| {
-                PlayerProgress::from_stored(env, stored, player.clone(), hunt_id, activated_at)
-            })
+        Self::try_get_player_progress(env, hunt_id, player)
+            .ok()
+            .flatten()
     }
 
-    /// Retrieves player progress or returns an error if not found.
+    /// Retrieves player progress or returns an error if not found or if entry is corrupt.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment
@@ -531,15 +571,18 @@ impl Storage {
     /// * `player` - The player's address
     ///
     /// # Returns
-    /// * `Ok(PlayerProgress)` if progress exists
-    /// * `Err(HuntError)` if the player is not registered
+    /// * `Ok(PlayerProgress)` if progress exists and is valid
+    /// * `Err(HuntError::PlayerNotRegistered)` if the player is not registered
+    /// * `Err(HuntError::CorruptPlayerProgress)` if progress deserialization fails
     pub fn get_player_progress_or_error(
         env: &Env,
         hunt_id: u64,
         player: &Address,
     ) -> Result<PlayerProgress, HuntError> {
-        Self::get_player_progress(env, hunt_id, player)
-            .ok_or(HuntError::PlayerNotRegistered { hunt_id })
+        match Self::try_get_player_progress(env, hunt_id, player)? {
+            Some(progress) => Ok(progress),
+            None => Err(HuntError::PlayerNotRegistered { hunt_id }),
+        }
     }
 
     /// Returns all registered players for a hunt.
