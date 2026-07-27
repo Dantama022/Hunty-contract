@@ -21,8 +21,19 @@ die()  { echo "ERROR: $*" >&2; exit 1; }
 
 require_cmd() { command -v "$1" &>/dev/null || die "'$1' not found in PATH"; }
 require_cmd stellar
-require_cmd sha256sum
 require_cmd jq
+
+# Linux provides sha256sum; macOS provides `shasum -a 256`.
+sha256_file() {
+  local file="$1"
+  if command -v sha256sum &>/dev/null; then
+    sha256sum "$file" | awk '{print $1}'
+  elif command -v shasum &>/dev/null; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  else
+    die "Neither sha256sum nor shasum found in PATH (install coreutils or use macOS shasum)"
+  fi
+}
 
 mkdir -p "$DEPLOY_DIR"
 
@@ -63,7 +74,7 @@ MANIFEST_FILE="${DEPLOY_DIR}/manifest.txt"
 for wasm_name in "${WASM_NAMES[@]}"; do
   wasm_path="${WASM_DIR}/${wasm_name}.wasm"
   [[ -f "$wasm_path" ]] || die "WASM not found: $wasm_path"
-  hash=$(sha256sum "$wasm_path" | awk '{print $1}')
+  hash=$(sha256_file "$wasm_path")
   echo "  ${wasm_name}.wasm  sha256:${hash}"
   echo "${wasm_name}.wasm  sha256:${hash}" >> "$MANIFEST_FILE"
 done

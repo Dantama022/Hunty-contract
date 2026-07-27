@@ -179,12 +179,6 @@ pub enum PoolOperation {
 }
 
 /// Resolution status for admin-resolved distributions.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ResolutionStatus {
-    Completed,
-    Refunded,
-}
 
 /// Comprehensive statistics for a reward pool, returned by get_pool_statistics().
 #[contracttype]

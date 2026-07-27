@@ -208,10 +208,6 @@ pub struct StoredPlayerProgress {
     /// BIT1 (2): reward_claimed
     /// BIT2–BIT7: reserved for future use
     pub flags: u8,
-    pub started_at: u64,
-    pub completed_at: u64,
-    /// Packed boolean flags: bit 0 = is_completed, bit 1 = reward_claimed
-    pub flags: u32,
     pub recent_submissions: Vec<u64>,
     pub clue_last_attempts: Map<u32, u64>,
 }
@@ -228,6 +224,7 @@ pub struct PlayerProgress {
     pub completed_clue_index: Map<u32, bool>,
     pub hinted_clues: Vec<u32>,
     pub total_score: u32,
+    pub required_completed_count: u32,
     pub started_at: u64,
     pub completed_at: u64,
     pub is_completed: bool,
@@ -245,6 +242,7 @@ impl PlayerProgress {
             completed_clue_index: Map::new(env),
             hinted_clues: Vec::new(env),
             total_score: 0,
+            required_completed_count: 0,
             started_at: current_time,
             completed_at: 0,
             is_completed: false,
@@ -254,19 +252,9 @@ impl PlayerProgress {
         }
     }
 
-    /// Extract is_completed flag from packed flags byte
-    fn flags_to_is_completed(flags: u32) -> bool {
-        (flags & 0x01) != 0
-    }
-
-    /// Extract reward_claimed flag from packed flags byte
-    fn flags_to_reward_claimed(flags: u32) -> bool {
-        (flags & 0x02) != 0
-    }
-
     /// Pack boolean flags into a single byte
-    fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u32 {
-        let mut flags = 0u32;
+    fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u8 {
+        let mut flags = 0u8;
         if is_completed {
             flags |= 0x01;
         }
@@ -281,15 +269,6 @@ impl PlayerProgress {
     /// `activated_at` is the hunt's activation timestamp, used to delta-encode
     /// `started_at` and `completed_at` into compact `u32` offsets.
     pub fn to_stored(&self, activated_at: u64) -> StoredPlayerProgress {
-        let mut flags: u8 = 0;
-        if self.is_completed {
-            flags |= 0b0000_0001;
-        }
-        if self.reward_claimed {
-            flags |= 0b0000_0010;
-        }
-
-        // Delta-encode timestamps relative to hunt activation.
         let started_at_delta = self.started_at.saturating_sub(activated_at) as u32;
         let completed_at_delta = if self.completed_at == 0 {
             0u32
@@ -304,15 +283,11 @@ impl PlayerProgress {
             required_completed_count: self.required_completed_count,
             started_at_delta,
             completed_at_delta,
-            flags,
-            started_at: self.started_at,
-            completed_at: self.completed_at,
             flags: Self::bools_to_flags(self.is_completed, self.reward_claimed),
             recent_submissions: self.recent_submissions.clone(),
             clue_last_attempts: self.clue_last_attempts.clone(),
         }
     }
-
 
     /// Reconstruct from stored form plus the key fields.
     ///
@@ -331,7 +306,6 @@ impl PlayerProgress {
             completed_clue_index.set(clue_id, true);
         }
 
-        // Reconstruct absolute timestamps from deltas.
         let started_at = activated_at + (stored.started_at_delta as u64);
         let completed_at = if stored.completed_at_delta == 0 {
             0u64
@@ -339,25 +313,18 @@ impl PlayerProgress {
             started_at + (stored.completed_at_delta as u64)
         };
 
-    pub fn from_stored(stored: StoredPlayerProgress, player: Address, hunt_id: u64) -> Self {
         Self {
             player,
             hunt_id,
             completed_clues: stored.completed_clues,
             completed_clue_index,
+            hinted_clues: stored.hinted_clues,
             total_score: stored.total_score,
             required_completed_count: stored.required_completed_count,
             started_at,
             completed_at,
             is_completed: (stored.flags & 0b0000_0001) != 0,
             reward_claimed: (stored.flags & 0b0000_0010) != 0,
-            clue_attempts: stored.clue_attempts,
-            hinted_clues: stored.hinted_clues,
-            total_score: stored.total_score,
-            started_at: stored.started_at,
-            completed_at: stored.completed_at,
-            is_completed: Self::flags_to_is_completed(stored.flags),
-            reward_claimed: Self::flags_to_reward_claimed(stored.flags),
             recent_submissions: stored.recent_submissions,
             clue_last_attempts: stored.clue_last_attempts,
         }

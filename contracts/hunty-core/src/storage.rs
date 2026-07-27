@@ -85,6 +85,11 @@ impl Storage {
     const REQUIRED_CLUES_KEY: soroban_sdk::Symbol = symbol_short!("REQCL");
     const CACHE_HIT_KEY: soroban_sdk::Symbol = symbol_short!("CHIT");
     const CACHE_MISS_KEY: soroban_sdk::Symbol = symbol_short!("CMISS");
+    const PLAYER_HUNTS_KEY: soroban_sdk::Symbol = symbol_short!("PHNT");
+    const TEAM_KEY: soroban_sdk::Symbol = symbol_short!("TEAM");
+    const TEAM_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("TMCT");
+    const PLAYER_TEAM_KEY: soroban_sdk::Symbol = symbol_short!("PLTM");
+    const TEAM_PROGRESS_KEY: soroban_sdk::Symbol = symbol_short!("TMPR");
 
     // Pause functions (granular: registrations, answers, rewards)
     pub fn set_pause_registrations(env: &Env, paused: bool) {
@@ -505,46 +510,12 @@ impl Storage {
         let activated_at = Self::get_hunt(env, hunt_id)
             .map(|h| h.activated_at)
             .unwrap_or(0);
-        env
-            .storage()
+        env.storage()
             .persistent()
             .get::<_, StoredPlayerProgress>(&key)
-            .map(|stored| PlayerProgress::from_stored(env, stored, player.clone(), hunt_id, activated_at))
-        let raw_val: Option<soroban_sdk::Val> = env.storage().persistent().get(&key);
-        raw_val.map(|val| {
-            #[contracttype]
-            #[derive(Clone, Debug)]
-            struct LegacyStoredPlayerProgress {
-                pub completed_clues: Vec<u32>,
-                pub total_score: u32,
-                pub started_at: u64,
-                pub completed_at: u64,
-                pub flags: u32,
-                pub recent_submissions: Vec<u64>,
-            }
-
-            if let Ok(bytes) = soroban_sdk::Bytes::try_from_val(env, &val) {
-                let stored: StoredPlayerProgress =
-                    StoredPlayerProgress::from_xdr(env, &bytes).unwrap();
-                PlayerProgress::from_stored(stored, player.clone(), hunt_id)
-            } else if let Ok(stored) = StoredPlayerProgress::try_from_val(env, &val) {
-                PlayerProgress::from_stored(stored, player.clone(), hunt_id)
-            } else if let Ok(legacy) = LegacyStoredPlayerProgress::try_from_val(env, &val) {
-                let stored = StoredPlayerProgress {
-                    completed_clues: legacy.completed_clues,
-                    hinted_clues: Vec::new(env),
-                    total_score: legacy.total_score,
-                    started_at: legacy.started_at,
-                    completed_at: legacy.completed_at,
-                    flags: legacy.flags,
-                    recent_submissions: legacy.recent_submissions,
-                };
-                PlayerProgress::from_stored(stored, player.clone(), hunt_id)
-            } else {
-                let progress: PlayerProgress = PlayerProgress::try_from_val(env, &val).unwrap();
-                progress
-            }
-        })
+            .map(|stored| {
+                PlayerProgress::from_stored(env, stored, player.clone(), hunt_id, activated_at)
+            })
     }
 
     /// Retrieves player progress or returns an error if not found.

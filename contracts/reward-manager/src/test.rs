@@ -536,7 +536,8 @@ mod test {
         let creator = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            create_pool_with_token(&env, creator.clone(), 42, token_address.clone(), 5_000_000).unwrap();
+            create_pool_with_token(&env, creator.clone(), 42, token_address.clone(), 5_000_000)
+                .unwrap();
 
             let status = RewardManager::get_reward_pool(env.clone(), 42).unwrap();
             assert_eq!(status.min_distribution_amount, 500);
@@ -566,7 +567,8 @@ mod test {
         let creator = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            let result = create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), -1);
+            let result =
+                create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), -1);
             assert_eq!(result, Err(RewardErrorCode::InvalidAmount));
         });
     }
@@ -581,7 +583,8 @@ mod test {
         let creator = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 5_000_000).unwrap();
+            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 5_000_000)
+                .unwrap();
         });
         env.mock_all_auths_allowing_non_root_auth();
         env.as_contract(&contract_id, || {
@@ -603,7 +606,8 @@ mod test {
         let creator = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 10_000_000).unwrap();
+            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 10_000_000)
+                .unwrap();
         });
         env.mock_all_auths_allowing_non_root_auth();
         env.as_contract(&contract_id, || {
@@ -624,7 +628,8 @@ mod test {
         let attacker = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 5_000_000).unwrap();
+            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 5_000_000)
+                .unwrap();
 
             let result = RewardManager::update_pool_config(env.clone(), attacker.clone(), 1, 100);
             assert_eq!(result, Err(RewardErrorCode::Unauthorized));
@@ -656,7 +661,8 @@ mod test {
         let creator = Address::generate(&env);
 
         env.as_contract(&contract_id, || {
-            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 5_000_000).unwrap();
+            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 5_000_000)
+                .unwrap();
         });
         env.mock_all_auths_allowing_non_root_auth();
         env.as_contract(&contract_id, || {
@@ -1063,7 +1069,8 @@ mod test {
 
         env.as_contract(&contract_id, || {
             initialize_contract(&env, &token_address);
-            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 1_000_000).unwrap();
+            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 1_000_000)
+                .unwrap();
             RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 80_000_000).unwrap();
             RewardManager::distribute_rewards(
                 env.clone(),
@@ -1138,7 +1145,8 @@ mod test {
         env.as_contract(&contract_id, || {
             initialize_contract(&env, &token_address);
             // Pool requires minimum 5_000_000 per distribution
-            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 5_000_000).unwrap();
+            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 5_000_000)
+                .unwrap();
             RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 50_000_000).unwrap();
 
             // 200 < minimum 5_000_000 → invalid even though funds are available
@@ -1300,7 +1308,8 @@ mod test {
         env.as_contract(&contract_id, || {
             initialize_contract(&env, &token_address);
             // Pool requires minimum 1_000 per distribution
-            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 10_000_000).unwrap();
+            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 10_000_000)
+                .unwrap();
             RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 50_000_000).unwrap();
 
             // Attempt to distribute 500 — below minimum of 10_000_000
@@ -1324,7 +1333,8 @@ mod test {
 
         env.as_contract(&contract_id, || {
             initialize_contract(&env, &token_address);
-            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 10_000_000).unwrap();
+            create_pool_with_token(&env, creator.clone(), 1, token_address.clone(), 10_000_000)
+                .unwrap();
             RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 50_000_000).unwrap();
 
             // Distribute exactly the minimum
@@ -1904,9 +1914,10 @@ mod test {
                 .unwrap();
             RewardManager::create_reward_pool(env.clone(), creator.clone(), 99, 0).unwrap();
             RewardManager::fund_reward_pool(env.clone(), creator.clone(), 99, 60_000_000).unwrap();
-            
+
             // Set pool expiration time to 1_700_000_000
-            RewardManager::set_pool_expiration(env.clone(), creator.clone(), 99, 1_700_000_000).unwrap();
+            RewardManager::set_pool_expiration(env.clone(), creator.clone(), 99, 1_700_000_000)
+                .unwrap();
 
             // Check config has expiration_time
             let cfg = RewardManager::get_reward_pool(env.clone(), 99).unwrap();
@@ -2210,21 +2221,57 @@ mod test {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
         let (contract_id, token_address, token_admin) = setup(&env);
+        let admin = Address::generate(&env);
+        let creator = Address::generate(&env);
+        let player = Address::generate(&env);
+        let authorized = Address::generate(&env);
+        let unauthorized = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 10_000);
+
+        env.as_contract(&contract_id, || {
+            RewardManager::initialize(env.clone(), admin.clone(), token_address).unwrap();
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 5_000).unwrap();
+            Storage::add_authorized_contract(&env, &authorized);
+        });
+
+        let config = xlm_only_config(&env, 2_000);
+        env.as_contract(&unauthorized, || {
+            let mut args: Vec<Val> = Vec::new(&env);
+            args.push_back((1u64).into_val(&env));
+            args.push_back(player.clone().into_val(&env));
+            args.push_back(config.clone().into_val(&env));
+
+            let result = env.try_invoke_contract::<(), RewardErrorCode>(
+                &contract_id,
+                &Symbol::new(&env, "distribute_rewards"),
+                args,
+            );
+            assert!(result.is_ok(), "invocation should succeed");
+            let _inner: Result<(), soroban_sdk::ConversionError> = result.unwrap();
+        });
+    }
+
+    /// Test get_pool_distributions with pagination
+    #[test]
+    fn test_get_pool_distributions_pagination() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
         let creator = Address::generate(&env);
         let player1 = Address::generate(&env);
         let player2 = Address::generate(&env);
         let player3 = Address::generate(&env);
 
-        // Fund pool with enough for 3 distributions
         mint_tokens(&env, &token_address, &token_admin, &creator, 30_000_000);
 
         env.as_contract(&contract_id, || {
-            RewardManager::initialize(env.clone(), admin.clone(), token_address.clone()).unwrap();
+            initialize_contract(&env, &token_address);
             RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
             RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 30_000_000).unwrap();
         });
 
-        // Distribute to 3 players
         env.as_contract(&contract_id, || {
             RewardManager::distribute_rewards(
                 env.clone(),
@@ -2249,35 +2296,25 @@ mod test {
             .unwrap();
         });
 
-        // Test pagination
         env.as_contract(&contract_id, || {
-            // Get total count
             let count = RewardManager::get_pool_distribution_count(env.clone(), 1);
             assert_eq!(count, 3);
 
-            let result = env.try_invoke_contract::<(), RewardErrorCode>(
-                &contract_id,
-                &Symbol::new(&env, "distribute_rewards"),
-                args,
-            );
-            // The invocation should succeed but return Unauthorized.
-            // (Assertion kept compiling but not asserted while ignored: the
-            // gate cannot be enforced under soroban-sdk 22 — see #[ignore].)
-            assert!(result.is_ok(), "invocation should succeed");
-            let _inner: Result<(), soroban_sdk::ConversionError> = result.unwrap();
-        });
+            let page1 = RewardManager::get_pool_distributions(env.clone(), 1, 0, 2);
+            assert_eq!(page1.len(), 2);
+            assert_eq!(page1.get(0).unwrap().player, player1);
+            assert_eq!(page1.get(0).unwrap().xlm_amount, 10_000_000);
+            assert_eq!(page1.get(1).unwrap().player, player2);
+            assert_eq!(page1.get(1).unwrap().xlm_amount, 10_000_000);
 
-            // Get second page (offset 2, limit 2)
             let page2 = RewardManager::get_pool_distributions(env.clone(), 1, 2, 2);
             assert_eq!(page2.len(), 1);
             assert_eq!(page2.get(0).unwrap().player, player3);
             assert_eq!(page2.get(0).unwrap().xlm_amount, 10_000_000);
 
-            // Get empty page (offset beyond list)
             let page3 = RewardManager::get_pool_distributions(env.clone(), 1, 10, 2);
             assert_eq!(page3.len(), 0);
 
-            // Get all at once
             let all = RewardManager::get_pool_distributions(env.clone(), 1, 0, 100);
             assert_eq!(all.len(), 3);
         });
