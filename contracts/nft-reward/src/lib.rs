@@ -1,5 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 use soroban_sdk::{
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Map,
+    String, Symbol, Val, Vec,
     contract, contractimpl, contracttype, panic_with_error, Address, Env, Map, String, Symbol,
     Val, Vec,
 };
@@ -39,6 +41,16 @@ pub struct NftMetadata {
     pub extensions: Map<String, String>,
 }
 
+/// Collection-level metadata stored at initialization and exposed via a query.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectionMetadata {
+    pub name: String,
+    pub description: String,
+    pub total_supply: u64,
+    pub creator: Option<Address>,
+}
+
 /// Collection-level statistics included in mint events for indexers.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +61,26 @@ pub struct NftCollectionStats {
 }
 
 fn image_uri_is_valid(uri: &String) -> bool {
+    // Accept non-empty URIs that start with https:// or ipfs://
+    // soroban_sdk::String has no as_str(); compare via byte-level checks.
+    let len = uri.len();
+    if len == 0 {
+        return false;
+    }
+    // Build byte slices for the prefixes and compare the leading bytes.
+    let https_prefix = b"https://";
+    let ipfs_prefix = b"ipfs://";
+    // Copy up to 8 bytes from the Soroban String into a local buffer.
+    let check_len: u32 = if len >= 8 { 8 } else { len };
+    let mut buf = [0u8; 8];
+    uri.copy_into_slice(&mut buf[..check_len as usize]);
+    let prefix8 = &buf[..check_len as usize];
+    if check_len >= 8 && prefix8 == https_prefix {
+        return true;
+    }
+    let check_len7: u32 = if len >= 7 { 7 } else { len };
+    let prefix7 = &buf[..check_len7 as usize];
+    check_len7 >= 7 && prefix7 == ipfs_prefix
     let len = uri.len();
     if len == 0 || len > 200 {
         return false;
@@ -123,7 +155,6 @@ pub struct NftMintedEvent {
     pub owner: Address,
     pub rarity: u32,
     pub tier: u32,
-    pub metadata: NftMetadata,
     pub minted_at: u64,
 }
 
@@ -215,6 +246,7 @@ impl NftReward {
         admin: Address,
         minter: Address,
         max_supply: Option<u64>,
+        collection_metadata: CollectionMetadata,
     ) -> Result<(), crate::errors::NftErrorCode> {
         if Storage::is_initialized(&env) {
             return Err(crate::errors::NftErrorCode::AlreadyInitialized);
@@ -223,6 +255,8 @@ impl NftReward {
         Storage::save_admin(&env, &admin);
         Storage::add_minter(&env, &minter);
         Storage::set_max_supply(&env, max_supply);
+        Storage::save_collection_metadata(&env, &collection_metadata);
+        Storage::mark_initialized(&env);
         Storage::set_contract_version(&env, CONTRACT_VERSION);
         Ok(())
     }
@@ -262,13 +296,13 @@ impl NftReward {
     /// The unique NFT ID of the minted NFT
     pub fn mint_reward_nft(
         env: Env,
-        minter: Address,
+        _minter: Address,
         hunt_id: u64,
         player_address: Address,
         metadata: NftMetadata,
     ) -> u64 {
         Self::require_authorized_caller(&env, &minter);
-        Self::mint_reward_nft_impl(env, hunt_id, player_address, metadata, false)
+        Self::mint_reward_nft_impl(env, hunt_id, player_address, metadata, true)
     }
 
     /// Mints a reward NFT from a generic metadata map. This is the entrypoint
@@ -291,7 +325,7 @@ impl NftReward {
     /// - "extensions": Map<String, String> (optional, arbitrary key-value metadata)
     pub fn mint_reward_nft_from_map(
         env: Env,
-        minter: Address,
+        _minter: Address,
         hunt_id: u64,
         player_address: Address,
         metadata: Map<Symbol, Val>,
@@ -432,10 +466,13 @@ impl NftReward {
         metadata.hunt_title =
             Self::sanitize_metadata_field(&env, &metadata.hunt_title, MAX_NFT_TITLE_BYTES, true);
 
+        // 0 is treated as "unlimited" — only enforce if max_supply is Some(n) with n > 0.
         if let Some(max_supply) = Storage::get_max_supply(&env) {
-            let current_supply = Storage::get_nft_counter(&env);
-            if current_supply >= max_supply {
-                panic_with_error!(&env, crate::errors::NftErrorCode::MaxSupplyReached);
+            if max_supply > 0 {
+                let current_supply = Storage::get_nft_counter(&env);
+                if current_supply >= max_supply {
+                    panic_with_error!(&env, crate::errors::NftErrorCode::MaxSupplyReached);
+                }
             }
         }
 
@@ -446,7 +483,6 @@ impl NftReward {
             nft_id,
             hunt_id,
             owner: player_address.clone(),
-            completion_player: player_address.clone(),
             metadata: metadata.clone(),
             transferable,
             minted_at,
@@ -458,11 +494,15 @@ impl NftReward {
         Storage::add_nft_to_owner(&env, &player_address, nft_id);
         Storage::add_nft_to_hunt(&env, hunt_id, nft_id);
         Storage::mark_hunt_minted(&env, hunt_id);
+        Storage::update_collection_metadata_total_supply(&env, Storage::get_nft_counter(&env));
 
         let event = NftMintedEvent {
             nft_id,
             hunt_id,
             owner: player_address,
+            rarity: nft_data.metadata.rarity,
+            tier: nft_data.metadata.tier,
+            metadata,
             rarity: metadata.rarity,
             tier: metadata.tier,
             metadata: metadata.clone(),
@@ -477,6 +517,11 @@ impl NftReward {
     /// Retrieves NFT data by ID.
     pub fn get_nft(env: Env, nft_id: u64) -> Option<NftData> {
         Storage::get_nft(&env, nft_id)
+    }
+
+    /// Returns the collection-level metadata configured at initialization.
+    pub fn get_collection_metadata(env: Env) -> Option<CollectionMetadata> {
+        Storage::get_collection_metadata(&env)
     }
 
     /// Returns complete metadata for an NFT, including hunt info and completion details.
@@ -796,6 +841,64 @@ impl NftReward {
         Storage::get_nft_counter(&env)
     }
 
+    /// Returns the configured maximum total supply of NFTs.
+    ///
+    /// - `None`  → no cap was set (unlimited minting)
+    /// - `Some(0)` → unlimited (explicit zero treated as unlimited)
+    /// - `Some(n)` → at most `n` NFTs may ever be minted
+    pub fn get_max_supply(env: Env) -> Option<u64> {
+        Storage::get_max_supply(&env)
+    }
+
+    /// Updates the maximum total supply cap. Admin only.
+    ///
+    /// - Pass `None` or `Some(0)` to remove the cap (unlimited).
+    /// - Pass `Some(n)` where `n >= current total_supply` to set a new cap.
+    ///   Attempting to set a cap lower than the already-minted count is
+    ///   rejected with `Unauthorized` to prevent bricking the contract.
+    ///
+    /// # Errors
+    /// * `NotInitialized` - Contract has not been initialized yet
+    /// * `Unauthorized`   - Caller is not the admin, or new cap < minted supply
+    pub fn set_max_supply(
+        env: Env,
+        admin: Address,
+        new_max: Option<u64>,
+    ) -> Result<(), crate::errors::NftErrorCode> {
+        Self::require_admin(&env, &admin)?;
+
+        // Guard: never allow setting a cap below what's already minted.
+        if let Some(cap) = new_max {
+            if cap > 0 {
+                let minted = Storage::get_nft_counter(&env);
+                if cap < minted {
+                    return Err(crate::errors::NftErrorCode::Unauthorized);
+                }
+            }
+        }
+
+        Storage::set_max_supply(&env, new_max);
+        Ok(())
+    }
+
+    /// Returns the number of NFTs that can still be minted.
+    ///
+    /// - `None`  → unlimited (no cap configured, or cap was set to 0)
+    /// - `Some(n)` → exactly `n` more NFTs may be minted before the cap is hit
+    ///
+    /// Once the cap is reached this returns `Some(0)`, and any subsequent mint
+    /// will panic with `MaxSupplyReached`.
+    pub fn get_remaining_supply(env: Env) -> Option<u64> {
+        match Storage::get_max_supply(&env) {
+            None => None,
+            Some(max) if max == 0 => None, // explicit 0 ⟹ unlimited
+            Some(max) => {
+                let minted = Storage::get_nft_counter(&env);
+                Some(max.saturating_sub(minted))
+            }
+        }
+    }
+
     /// Lists all NFTs minted by the contract with pagination support.
     ///
     /// Returns a vector of NftData structs, paginated by offset and limit.
@@ -830,6 +933,191 @@ impl NftReward {
         }
 
         result
+    }
+
+    /// Searches NFTs by metadata fields with pagination support.
+    ///
+    /// Allows filtering NFTs by various metadata fields. All filter parameters are optional -
+    /// only provided filters are applied. Returns matching NFTs with pagination.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `offset` - The starting index for pagination (0-based)
+    /// * `limit` - The maximum number of NFTs to return (capped at MAX_SCAN_LIMIT)
+    /// * `title_filter` - Optional filter for NFT title (exact match)
+    /// * `hunt_title_filter` - Optional filter for hunt title (exact match)
+    /// * `rarity_filter` - Optional filter for rarity tier (0-5)
+    /// * `tier_filter` - Optional filter for custom tier
+    /// * `creator_filter` - Optional filter for creator address
+    /// * `hunt_id_filter` - Optional filter for hunt ID
+    /// * `extension_key` - Optional extension key to search for
+    /// * `extension_value` - Optional extension value to match (requires extension_key)
+    ///
+    /// # Returns
+    /// Vec<NftData> - A vector of matching NFT data structures, paginated by offset and limit
+    pub fn search_nfts_by_metadata(
+        env: Env,
+        offset: u32,
+        limit: u32,
+        title_filter: Option<String>,
+        hunt_title_filter: Option<String>,
+        rarity_filter: Option<u32>,
+        tier_filter: Option<u32>,
+        creator_filter: Option<Address>,
+        hunt_id_filter: Option<u64>,
+        extension_key: Option<String>,
+        extension_value: Option<String>,
+    ) -> Vec<NftData> {
+        let all_nft_ids = Storage::get_all_nft_ids(&env);
+        let mut matches = Vec::new(&env);
+
+        // Collect all matching NFTs first
+        for nft_id in all_nft_ids.iter() {
+            if let Some(nft) = Storage::get_nft(&env, nft_id) {
+                let mut is_match = true;
+
+                // Apply title filter
+                if let Some(ref filter) = title_filter {
+                    if nft.metadata.title != *filter {
+                        is_match = false;
+                    }
+                }
+
+                // Apply hunt title filter
+                if is_match {
+                    if let Some(ref filter) = hunt_title_filter {
+                        if nft.metadata.hunt_title != *filter {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply rarity filter
+                if is_match {
+                    if let Some(filter) = rarity_filter {
+                        if nft.metadata.rarity != filter {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply tier filter
+                if is_match {
+                    if let Some(filter) = tier_filter {
+                        if nft.metadata.tier != filter {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply creator filter
+                if is_match {
+                    if let Some(ref filter) = creator_filter {
+                        if nft.metadata.creator != Some(filter.clone()) {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply hunt ID filter
+                if is_match {
+                    if let Some(filter) = hunt_id_filter {
+                        if nft.hunt_id != filter {
+                            is_match = false;
+                        }
+                    }
+                }
+
+                // Apply extension filter
+                if is_match {
+                    if let Some(ref key) = extension_key {
+                        if let Some(ref value) = extension_value {
+                            // Both key and value provided - exact match
+                            if let Some(stored_value) = nft.metadata.extensions.get(key.clone()) {
+                                if stored_value != *value {
+                                    is_match = false;
+                                }
+                            } else {
+                                is_match = false;
+                            }
+                        } else {
+                            // Only key provided - check if extension exists
+                            if !nft.metadata.extensions.contains_key(key.clone()) {
+                                is_match = false;
+                            }
+                        }
+                    }
+                }
+
+                if is_match {
+                    matches.push_back(nft);
+                }
+            }
+        }
+
+        // Apply pagination to results
+        let total_matches = matches.len();
+        if offset >= total_matches {
+            return Vec::new(&env);
+        }
+
+        let bounded_limit = limit.min(MAX_SCAN_LIMIT);
+        let end = offset.saturating_add(bounded_limit).min(total_matches);
+
+        let mut result = Vec::new(&env);
+        for i in offset..end {
+            if let Some(nft) = matches.get(i) {
+                result.push_back(nft.clone());
+            }
+        }
+
+        result
+    }
+
+    /// Transfers an NFT to a new owner when the NFT is transferable.
+    /// Non-transferable (soulbound) NFTs remain bound to the minting recipient.
+    pub fn transfer_nft(
+        env: Env,
+        nft_id: u64,
+        from_address: Address,
+        to_address: Address,
+        caller: Address,
+    ) -> Result<(), crate::errors::NftErrorCode> {
+        caller.require_auth();
+
+        let mut nft = Storage::get_nft(&env, nft_id).ok_or(crate::errors::NftErrorCode::NftNotFound)?;
+
+        if nft.locked {
+            return Err(crate::errors::NftErrorCode::NftLocked);
+        }
+        if !nft.transferable {
+            return Err(crate::errors::NftErrorCode::NftNotTransferable);
+        }
+        if nft.owner != from_address {
+            return Err(crate::errors::NftErrorCode::NotOwner);
+        }
+        if to_address == from_address {
+            return Err(crate::errors::NftErrorCode::InvalidRecipient);
+        }
+        if caller != from_address && !Storage::is_operator(&env, &from_address, &caller) {
+            return Err(crate::errors::NftErrorCode::NotOperator);
+        }
+
+        Storage::remove_nft_from_owner(&env, &from_address, nft_id);
+        nft.owner = to_address.clone();
+        Storage::save_nft(&env, &nft);
+        Storage::add_nft_to_owner(&env, &to_address, nft_id);
+
+        env.events().publish(
+            (Symbol::new(&env, "NftTransferred"), nft_id),
+            NftTransferredEvent {
+                nft_id,
+                from: from_address,
+                to: to_address,
+            },
+        );
+
+        Ok(())
     }
 
     /// Returns the owner of an NFT.
@@ -929,6 +1217,9 @@ impl NftReward {
                 owner,
             },
         );
+
+        env.events()
+            .publish((Symbol::new(&env, "NftBurned"), nft_id), (nft_id, owner));
 
         Ok(())
     }

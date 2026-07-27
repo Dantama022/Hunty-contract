@@ -28,6 +28,45 @@ impl RewardConfig {
     }
 }
 
+/// Mirror of the RewardManager's per-hunt pool configuration. Callers such as
+/// HuntyCore use this to deserialize `get_pool_config` cross-contract results.
+/// Field names and order must stay in sync with the RewardManager's struct so
+/// the XDR encodings match.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RewardPoolConfig {
+    /// Address of the hunt creator who owns this pool.
+    pub creator: Address,
+    /// Minimum XLM amount per distribution. 0 means no minimum enforced.
+    pub min_distribution_amount: i128,
+    /// Optional time-based reward tiers. When empty, the per-winner amount
+    /// is computed from `xlm_pool / max_winners`.
+    pub time_based_tiers: Vec<TimeBasedRewardTier>,
+    /// Whether distributions from this pool are temporarily frozen.
+    pub frozen: bool,
+    /// Token address for the reward pool (e.g., XLM, USDC, or other SAC tokens).
+    pub token_address: Address,
+    /// Optional NFT contract address for NFT-only or mixed reward pools.
+    pub nft_contract: Option<Address>,
+    /// Target funding amount for progress tracking (0 = disabled).
+    pub target_amount: i128,
+    /// Minimum seconds between distributions (0 = disabled).
+    pub min_distribution_interval_secs: u64,
+    /// Distribution mode (Fixed or Proportional).
+    pub distribution_mode: DistributionMode,
+}
+
+/// How rewards are calculated from the pool at distribution time.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DistributionMode {
+    /// Fixed amount supplied by the caller.
+    Fixed = 0,
+    /// Share of the pool based on player score.
+    Proportional = 1,
+}
+
 /// One tier of a time-based reward schedule configured on a reward pool.
 ///
 /// A tier defines an XLM amount that is granted to a player who completes the
