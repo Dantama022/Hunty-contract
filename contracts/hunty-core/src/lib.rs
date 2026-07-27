@@ -1819,7 +1819,7 @@ impl HuntyCore {
         Storage::save_player_progress(env, progress);
 
         // Update hunt reward config (persisted by the caller)
-        hunt.reward_config.claimed_count += 1;
+        hunt.reward_config.claimed_count = hunt.reward_config.claimed_count.saturating_add(1);
 
         // Once every reward slot has been claimed, the hunt itself is done.
         // The status change is persisted by the caller along with claimed_count.
@@ -2251,17 +2251,33 @@ impl HuntyCore {
     ) -> u32 {
         let elapsed = completed_at.saturating_sub(started_at);
         let decrease_steps = elapsed / 50; // Decrease every 50 seconds
-        let decrease_bps = decrease_steps * 5000; // 5000 bps = 0.5x per step
+        // Use saturating multiplication to prevent overflow on very large elapsed times
+        let decrease_bps = decrease_steps.saturating_mul(5000); // 5000 bps = 0.5x per step
+        // Cap at u32::MAX before truncating to prevent silent wrap-around
+        let decrease_bps_u32 = if decrease_bps > u32::MAX as u64 {
+            u32::MAX
+        } else {
+            decrease_bps as u32
+        };
         let multiplier_bps = core::cmp::max(
             10000, // Minimum 1x
             hunt.start_multiplier_bps
-                .saturating_sub(decrease_bps as u32),
+                .saturating_sub(decrease_bps_u32),
         );
         let base_points = clue
             .points
             .saturating_mul(clue.difficulty)
             .saturating_mul(clue.weight);
-        (base_points as u64 * multiplier_bps as u64 / 10000) as u32
+        // Use saturating arithmetic for the score multiplication to prevent overflow
+        let score = (base_points as u64)
+            .saturating_mul(multiplier_bps as u64)
+            .saturating_div(10000);
+        // Clamp to u32::MAX to prevent silent truncation
+        if score > u32::MAX as u64 {
+            u32::MAX
+        } else {
+            score as u32
+        }
     }
 
     pub fn submit_answer(
@@ -3239,13 +3255,13 @@ impl HuntyCore {
 
     fn sync_hunt_clue_counts(env: &Env, hunt_id: u64, hunt: &mut Hunt) {
         let clues = Storage::list_clues_for_hunt(env, hunt_id, 0, u32::MAX);
-        let mut total = 0;
-        let mut required = 0;
+        let mut total = 0u32;
+        let mut required = 0u32;
         for i in 0..clues.len() {
             let clue = clues.get(i).unwrap();
-            total += 1;
+            total = total.saturating_add(1);
             if clue.is_required {
-                required += 1;
+                required = required.saturating_add(1);
             }
         }
         hunt.total_clues = total;
