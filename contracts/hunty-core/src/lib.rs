@@ -1572,17 +1572,11 @@ impl HuntyCore {
     pub fn get_hunt_info(env: Env, hunt_id: u64) -> Result<Hunt, HuntErrorCode> {
         let hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
 
-        match hunt.status {
-            HuntStatus::Draft
-            | HuntStatus::Active
-            | HuntStatus::Completed
-            | HuntStatus::Cancelled
-            | HuntStatus::Paused
-            | HuntStatus::EmergencyStopped
-            | HuntStatus::Archived => {}
-        }
-
-        // Return the full Hunt struct
+        // Return the full Hunt struct. Hunt info is intentionally available in
+        // every status (Draft, Active, Completed, Cancelled, Paused,
+        // EmergencyStopped, Archived); there is no per-status gating to apply
+        // for a read-only getter, so the previous exhaustive-but-empty match
+        // over `hunt.status` was dead code and has been removed.
         Ok(hunt)
     }
 
