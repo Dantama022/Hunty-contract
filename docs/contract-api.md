@@ -2279,17 +2279,24 @@ pub fn get_hunt_nft_count(env: Env, hunt_id: u64) -> u32
 
 ---
 
-#### `burn`
+#### `burn_nft`
 
-Burns (permanently destroys) an NFT, removing it from storage and the owner's list.
+Burns (permanently destroys) an NFT, removing it from storage, the owner's list,
+and the hunt index. Emits an `NftBurned` event with `nft_id`, `hunt_id`, and `owner`.
 
 # Authorization
-The `owner` must authorize this call. The caller must also be the current owner.
+The `owner` must authorize this call and be the current owner of the NFT.
+Locked NFTs cannot be burned.
+
+# Errors
+* `NftNotFound` - NFT does not exist
+* `NotOwner` - Caller is not the current owner
+* `NftLocked` - NFT is locked and cannot be burned
 
 **Signature:**
 
 ```rust
-pub fn burn(env: Env, nft_id: u64, owner: Address) -> Result<(), crate::errors::NftErrorCode>
+pub fn burn_nft(env: Env, nft_id: u64, owner: Address) -> Result<(), crate::errors::NftErrorCode>
 ```
 
 **Parameters:**
@@ -2316,6 +2323,12 @@ pub fn burn(env: Env, nft_id: u64, owner: Address) -> Result<(), crate::errors::
 - `NotOperator` = 10
 - `NftNotTransferable` = 11
 - `NftLocked` = 12
+- `InvalidMetadata` = 13
+- `MetadataFrozen` = 14
+- `TooManyExtensions` = 15
+- `InvalidExtensionKey` = 16
+- `InvalidExtensionValue` = 17
+- `ExtensionNotFound` = 18
 
 ---
 
