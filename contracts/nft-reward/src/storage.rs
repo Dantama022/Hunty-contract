@@ -1,5 +1,5 @@
-use crate::{CollectionMetadata, NftData, NftCore, NftMetadata};
-use soroban_sdk::{symbol_short, Address, Env, String, Vec, Symbol};
+use crate::{CollectionMetadata, NftCore, NftData, NftMetadata};
+use soroban_sdk::{symbol_short, Address, Env, String, Symbol, Vec};
 
 /// Storage layer for NFTs.
 pub struct Storage;
@@ -152,7 +152,10 @@ impl Storage {
     // --- Authorized cross-contract callers ---
 
     pub fn has_authorized_contracts(env: &Env) -> bool {
-        env.storage().instance().get(&Self::HAS_AUTH_KEY).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&Self::HAS_AUTH_KEY)
+            .unwrap_or(false)
     }
 
     pub fn add_authorized_contract(env: &Env, contract: &Address) {
@@ -200,14 +203,16 @@ impl Storage {
         // Check if NFT ID already exists to avoid duplicates
         if all_nfts.first_index_of(nft.nft_id).is_none() {
             all_nfts.push_back(nft.nft_id);
-            env.storage().persistent().set(&Self::ALL_NFTS_KEY, &all_nfts);
+            env.storage()
+                .persistent()
+                .set(&Self::ALL_NFTS_KEY, &all_nfts);
         }
     }
 
     pub fn get_nft(env: &Env, nft_id: u64) -> Option<NftData> {
         let core_key = Self::nft_core_key(nft_id);
         let core: Option<NftCore> = env.storage().persistent().get(&core_key);
-        
+
         let meta_key = Self::nft_metadata_key(nft_id);
         let meta: Option<NftMetadata> = env.storage().persistent().get(&meta_key);
 
@@ -245,7 +250,9 @@ impl Storage {
             .unwrap_or_else(|| Vec::new(env));
         if let Some(idx) = all_nfts.first_index_of(nft_id) {
             all_nfts.remove(idx);
-            env.storage().persistent().set(&Self::ALL_NFTS_KEY, &all_nfts);
+            env.storage()
+                .persistent()
+                .set(&Self::ALL_NFTS_KEY, &all_nfts);
         }
     }
 

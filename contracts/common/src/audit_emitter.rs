@@ -1,5 +1,5 @@
-use soroban_sdk::{Address, Env, String, Symbol, Vec};
 use crate::audit::{AuditEvent, TOPIC_AUDIT};
+use soroban_sdk::{Address, Env, String, Symbol, Vec};
 
 /// Emits a standardized audit event to the contract environment
 pub fn emit_audit_event(
@@ -10,7 +10,7 @@ pub fn emit_audit_event(
     details: Vec<(Symbol, String)>,
 ) {
     let timestamp = env.ledger().timestamp();
-    
+
     let event = AuditEvent {
         admin_address: admin_address.clone(),
         timestamp,
@@ -20,10 +20,8 @@ pub fn emit_audit_event(
     };
 
     // Emit with indexed topics for efficient off-chain filtering
-    env.events().publish(
-        (TOPIC_AUDIT, action_type, admin_address.clone()),
-        event,
-    );
+    env.events()
+        .publish((TOPIC_AUDIT, action_type, admin_address.clone()), event);
 }
 
 /// Helper to build detail pairs

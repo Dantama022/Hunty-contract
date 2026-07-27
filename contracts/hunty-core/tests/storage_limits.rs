@@ -4,7 +4,6 @@
 /// - Maximum title/description lengths
 /// - Maximum answer length
 /// - Large number of hunts
-
 use hunty_core::HuntyCore;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, String};
@@ -46,14 +45,8 @@ fn test_add_maximum_clues_at_limit() {
 
         // Add exactly 100 clues
         for i in 0..100 {
-            let question = String::from_str(
-                env,
-                &format!("Question {}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("Answer {}", i),
-            );
+            let question = String::from_str(env, &format!("Question {}", i));
+            let answer = String::from_str(env, &format!("Answer {}", i));
             HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false).unwrap();
         }
 
@@ -91,14 +84,8 @@ fn test_exceed_maximum_clues_fails() {
 
         // Add 100 clues successfully
         for i in 0..100 {
-            let question = String::from_str(
-                env,
-                &format!("Question {}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("Answer {}", i),
-            );
+            let question = String::from_str(env, &format!("Question {}", i));
+            let answer = String::from_str(env, &format!("Answer {}", i));
             HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false).unwrap();
         }
 
@@ -138,14 +125,8 @@ fn test_clue_storage_at_boundary() {
 
         // Add 99 clues
         for i in 0..99 {
-            let question = String::from_str(
-                env,
-                &format!("Q{}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("A{}", i),
-            );
+            let question = String::from_str(env, &format!("Q{}", i));
+            let answer = String::from_str(env, &format!("A{}", i));
             HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false).unwrap();
         }
 
@@ -165,7 +146,8 @@ fn test_clue_storage_at_boundary() {
         // Add 101st - should fail
         let question_over = String::from_str(env, "Over limit");
         let answer_over = String::from_str(env, "Overflow");
-        let result = HuntyCore::add_clue(env.clone(), hunt_id, question_over, answer_over, 10, false);
+        let result =
+            HuntyCore::add_clue(env.clone(), hunt_id, question_over, answer_over, 10, false);
         assert!(result.is_err());
     });
 }
@@ -228,10 +210,7 @@ fn test_title_exceeds_maximum_length() {
             None,
         );
 
-        assert!(
-            result.is_err(),
-            "Title exceeding max length should fail"
-        );
+        assert!(result.is_err(), "Title exceeding max length should fail");
     });
 }
 
@@ -292,10 +271,7 @@ fn test_description_at_maximum_length() {
             None,
         );
 
-        assert!(
-            result.is_ok(),
-            "Description at max length should succeed"
-        );
+        assert!(result.is_ok(), "Description at max length should succeed");
     });
 }
 
@@ -421,10 +397,7 @@ fn test_question_exceeds_maximum_length() {
         let answer = String::from_str(env, "answer");
 
         let result = HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false);
-        assert!(
-            result.is_err(),
-            "Question exceeding max length should fail"
-        );
+        assert!(result.is_err(), "Question exceeding max length should fail");
     });
 }
 
@@ -492,10 +465,7 @@ fn test_answer_exceeds_maximum_length() {
         let answer = String::from_str(env, &over_max_answer);
 
         let result = HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false);
-        assert!(
-            result.is_err(),
-            "Answer exceeding max length should fail"
-        );
+        assert!(result.is_err(), "Answer exceeding max length should fail");
     });
 }
 
@@ -537,11 +507,7 @@ fn test_create_multiple_hunts_sequential() {
         // Verify each hunt can be retrieved
         for (i, hunt_id) in hunt_ids.iter().enumerate() {
             let hunt = HuntyCore::get_hunt(env.clone(), *hunt_id).unwrap();
-            assert_eq!(
-                hunt.hunt_id, *hunt_id,
-                "Hunt {} should have correct ID",
-                i
-            );
+            assert_eq!(hunt.hunt_id, *hunt_id, "Hunt {} should have correct ID", i);
         }
     });
 }
@@ -572,25 +538,15 @@ fn test_create_hunts_with_full_clue_set() {
 
             // Add 100 clues to each hunt
             for clue_num in 0..100 {
-                let question = String::from_str(
-                    env,
-                    &format!("Hunt {} Clue {}", hunt_num, clue_num),
-                );
-                let answer = String::from_str(
-                    env,
-                    &format!("Answer {} {}", hunt_num, clue_num),
-                );
+                let question =
+                    String::from_str(env, &format!("Hunt {} Clue {}", hunt_num, clue_num));
+                let answer = String::from_str(env, &format!("Answer {} {}", hunt_num, clue_num));
                 HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false).unwrap();
             }
 
             // Verify clues were added
             let clues = HuntyCore::list_clues(env.clone(), hunt_id).unwrap();
-            assert_eq!(
-                clues.len(),
-                100,
-                "Hunt {} should have 100 clues",
-                hunt_num
-            );
+            assert_eq!(clues.len(), 100, "Hunt {} should have 100 clues", hunt_num);
         }
     });
 }
@@ -623,14 +579,8 @@ fn test_hunt_storage_pressure_mixed_operations() {
             // Add clues: hunt 0 gets 20, hunt 1 gets 40, hunt 2 gets 60, hunt 3 gets 80, hunt 4 gets 100
             let clue_count = 20 + (hunt_num * 20);
             for clue_num in 0..clue_count {
-                let question = String::from_str(
-                    env,
-                    &format!("Q{}-{}", hunt_num, clue_num),
-                );
-                let answer = String::from_str(
-                    env,
-                    &format!("A{}-{}", hunt_num, clue_num),
-                );
+                let question = String::from_str(env, &format!("Q{}-{}", hunt_num, clue_num));
+                let answer = String::from_str(env, &format!("A{}-{}", hunt_num, clue_num));
                 HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false).unwrap();
             }
 
@@ -641,7 +591,8 @@ fn test_hunt_storage_pressure_mixed_operations() {
         for (hunt_id, expected_clues) in hunt_ids.iter() {
             let clues = HuntyCore::list_clues(env.clone(), *hunt_id).unwrap();
             assert_eq!(
-                clues.len() as u64, *expected_clues,
+                clues.len() as u64,
+                *expected_clues,
                 "Hunt should have {} clues",
                 expected_clues
             );
@@ -678,14 +629,8 @@ fn test_storage_limits_comprehensive_stress() {
 
         // Add 100 clues with maximum question and answer lengths
         for i in 0..100 {
-            let question = String::from_str(
-                env,
-                &format!("{}Q{}", "k".repeat(1990), i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("{}A{}", "l".repeat(240), i),
-            );
+            let question = String::from_str(env, &format!("{}Q{}", "k".repeat(1990), i));
+            let answer = String::from_str(env, &format!("{}A{}", "l".repeat(240), i));
             HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false).unwrap();
         }
 
@@ -724,14 +669,8 @@ fn test_multiple_hunts_at_maximum_size() {
 
             // Add 100 clues
             for clue_num in 0..100 {
-                let question = String::from_str(
-                    env,
-                    &"n".repeat(2000),
-                );
-                let answer = String::from_str(
-                    env,
-                    &"o".repeat(256),
-                );
+                let question = String::from_str(env, &"n".repeat(2000));
+                let answer = String::from_str(env, &"o".repeat(256));
                 HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false).unwrap();
             }
         }

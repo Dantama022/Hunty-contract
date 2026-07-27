@@ -1,18 +1,20 @@
 #![cfg_attr(not(test), no_std)]
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, IntoVal, Symbol, Val,
     Vec,
 };
-use soroban_sdk::xdr::ToXdr;
 
 pub use crate::errors::RewardErrorCode;
 use crate::nft_handler::NftHandler;
 use crate::storage::Storage;
 use crate::token_handler::TokenHandler;
 pub use crate::types::{
-    resolve_tier_amount, tiers_are_strictly_ascending, BatchDistributionEntry, DistributionMode, DistributionProof, DistributionRecord, DistributionStatus,
-    PendingNftMint, PoolAuditEntry, PoolDistribution, PoolOperation, ResolutionStatus, RewardConfig,
-    RewardPoolConfig, RewardPoolStatistics, RewardPoolStatus, SemVer, TierError, TimeBasedRewardTier, ValidationResult,
+    resolve_tier_amount, tiers_are_strictly_ascending, BatchDistributionEntry, DistributionMode,
+    DistributionProof, DistributionRecord, DistributionStatus, PendingNftMint, PoolAuditEntry,
+    PoolDistribution, PoolOperation, ResolutionStatus, RewardConfig, RewardPoolConfig,
+    RewardPoolStatistics, RewardPoolStatus, SemVer, TierError, TimeBasedRewardTier,
+    ValidationResult,
 };
 use crate::xlm_handler::XlmHandler;
 
@@ -1043,11 +1045,7 @@ impl RewardManager {
     /// # Errors
     /// * `PoolNotFound` - No pool exists for this hunt_id
     /// * `Unauthorized` - Caller is neither the pool creator nor the contract admin
-    pub fn freeze_pool(
-        env: Env,
-        caller: Address,
-        hunt_id: u64,
-    ) -> Result<(), RewardErrorCode> {
+    pub fn freeze_pool(env: Env, caller: Address, hunt_id: u64) -> Result<(), RewardErrorCode> {
         caller.require_auth();
 
         let mut config =
@@ -1095,11 +1093,7 @@ impl RewardManager {
     /// # Errors
     /// * `PoolNotFound` - No pool exists for this hunt_id
     /// * `Unauthorized` - Caller is neither the pool creator nor the contract admin
-    pub fn unfreeze_pool(
-        env: Env,
-        caller: Address,
-        hunt_id: u64,
-    ) -> Result<(), RewardErrorCode> {
+    pub fn unfreeze_pool(env: Env, caller: Address, hunt_id: u64) -> Result<(), RewardErrorCode> {
         caller.require_auth();
 
         let mut config =
@@ -1249,9 +1243,9 @@ impl RewardManager {
             }
 
             // Get pool config to access token address and minimum distribution amount
-            let pool_config = Storage::get_pool_config(&env, hunt_id)
-                .ok_or(RewardErrorCode::PoolNotFound)?;
-            
+            let pool_config =
+                Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
             // Enforce pool minimum distribution amount
             if pool_config.min_distribution_amount > 0
                 && amount < pool_config.min_distribution_amount
@@ -1313,7 +1307,13 @@ impl RewardManager {
                 }
             }
 
-            XlmHandler::distribute_xlm(&env, token_address, &contract_addr, &player_address, amount);
+            XlmHandler::distribute_xlm(
+                &env,
+                token_address,
+                &contract_addr,
+                &player_address,
+                amount,
+            );
             xlm_amount = amount;
             Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
 
@@ -1390,13 +1390,8 @@ impl RewardManager {
         Storage::increment_distribution_nonce(&env, hunt_id, &player_address);
 
         let timestamp = env.ledger().timestamp();
-        let proof_hash = Self::compute_distribution_hash(
-            &env,
-            hunt_id,
-            &player_address,
-            xlm_amount,
-            timestamp,
-        );
+        let proof_hash =
+            Self::compute_distribution_hash(&env, hunt_id, &player_address, xlm_amount, timestamp);
         Storage::set_distribution_proof(
             &env,
             hunt_id,
@@ -1719,11 +1714,7 @@ impl RewardManager {
                 &entry.player_address,
                 &DistributionRecord { xlm_amount, nft_id },
             );
-            Storage::increment_distribution_nonce(
-                &env,
-                entry.hunt_id,
-                &entry.player_address,
-            );
+            Storage::increment_distribution_nonce(&env, entry.hunt_id, &entry.player_address);
 
             // 2d. Emit event (same shape as single distribute_rewards)
             env.events().publish(
@@ -1741,7 +1732,11 @@ impl RewardManager {
                 actor: entry.player_address.clone(),
                 operation: PoolOperation::Distribute,
                 timestamp: env.ledger().timestamp(),
-                amount: if xlm_amount > 0 { Some(xlm_amount) } else { None },
+                amount: if xlm_amount > 0 {
+                    Some(xlm_amount)
+                } else {
+                    None
+                },
             };
             Storage::append_audit_entry(&env, entry.hunt_id, audit_entry);
         }
@@ -1969,9 +1964,7 @@ impl RewardManager {
             return Err(RewardErrorCode::InvalidAmount);
         }
 
-        if pool_config.min_distribution_amount > 0
-            && amount < pool_config.min_distribution_amount
-        {
+        if pool_config.min_distribution_amount > 0 && amount < pool_config.min_distribution_amount {
             return Err(RewardErrorCode::BelowMinimumAmount);
         }
 
