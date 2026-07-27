@@ -230,6 +230,10 @@ impl Storage {
                     max_submissions_per_minute: legacy.max_submissions_per_minute,
                     max_attempts_per_clue: legacy.max_attempts_per_clue,
                     start_multiplier_bps: legacy.start_multiplier_bps,
+                    registration_deadline: 0,
+                    allow_partial_scoring: false,
+                    team_mode: false,
+                    default_points: 100, // Default value for legacy hunts
                 })
         });
         if let Some(ref hunt) = result {
@@ -510,41 +514,6 @@ impl Storage {
             .persistent()
             .get::<_, StoredPlayerProgress>(&key)
             .map(|stored| PlayerProgress::from_stored(env, stored, player.clone(), hunt_id, activated_at))
-        let raw_val: Option<soroban_sdk::Val> = env.storage().persistent().get(&key);
-        raw_val.map(|val| {
-            #[contracttype]
-            #[derive(Clone, Debug)]
-            struct LegacyStoredPlayerProgress {
-                pub completed_clues: Vec<u32>,
-                pub total_score: u32,
-                pub started_at: u64,
-                pub completed_at: u64,
-                pub flags: u32,
-                pub recent_submissions: Vec<u64>,
-            }
-
-            if let Ok(bytes) = soroban_sdk::Bytes::try_from_val(env, &val) {
-                let stored: StoredPlayerProgress =
-                    StoredPlayerProgress::from_xdr(env, &bytes).unwrap();
-                PlayerProgress::from_stored(stored, player.clone(), hunt_id)
-            } else if let Ok(stored) = StoredPlayerProgress::try_from_val(env, &val) {
-                PlayerProgress::from_stored(stored, player.clone(), hunt_id)
-            } else if let Ok(legacy) = LegacyStoredPlayerProgress::try_from_val(env, &val) {
-                let stored = StoredPlayerProgress {
-                    completed_clues: legacy.completed_clues,
-                    hinted_clues: Vec::new(env),
-                    total_score: legacy.total_score,
-                    started_at: legacy.started_at,
-                    completed_at: legacy.completed_at,
-                    flags: legacy.flags,
-                    recent_submissions: legacy.recent_submissions,
-                };
-                PlayerProgress::from_stored(stored, player.clone(), hunt_id)
-            } else {
-                let progress: PlayerProgress = PlayerProgress::try_from_val(env, &val).unwrap();
-                progress
-            }
-        })
     }
 
     /// Retrieves player progress or returns an error if not found.
