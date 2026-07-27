@@ -334,12 +334,27 @@ cd ../nft-reward && make build
 
 The API is configured with explicit environment files so development/testnet, QA/staging, and mainnet deployments do not share contract addresses or RPC settings.
 
-Available templates:
+Available templates (tracked in git, placeholders only — **never** put real secrets in these):
 
-- `.env.testnet` for development and testnet integration work
-- `.env.staging` for QA/pre-production validation on dedicated staging contracts
-- `.env.mainnet` for production mainnet deployment
+- `.env.testnet.example` for development and testnet integration work
+- `.env.staging.example` for QA/pre-production validation on dedicated staging contracts
+- `.env.mainnet.example` for production mainnet deployment
 - `.env.example` as the shared reference template
+
+Copy the template for your target environment to its unsuffixed name and fill in the real values:
+
+```bash
+cp .env.testnet.example .env.testnet
+cp .env.staging.example .env.staging
+cp .env.mainnet.example .env.mainnet
+```
+
+The working files (`.env`, `.env.testnet`, `.env.staging`, `.env.mainnet`, and any other
+`.env.*`) are git-ignored, so a filled-in `ADMIN_SECRET` can never be committed by
+`git add -A`. Only `.env.example` and `.env.*.example` are negated back into tracking.
+
+> **Never** rename a filled-in file back to `*.example`, and never commit real
+> credentials. Rotate `ADMIN_SECRET` immediately if one is ever pushed.
 
 Required variables are validated when the API starts. Startup fails fast with a clear error if a value is missing, invalid, or still contains a `replace-with-...` placeholder.
 
@@ -365,7 +380,8 @@ Contract addresses are tracked per environment in:
 - `config/contracts.staging.json`
 - `config/contracts.mainnet.json`
 
-Keep these files in sync with the matching `.env.<environment>` file after each deployment.
+Keep these files in sync with the matching `.env.<environment>` file (your local copy of
+`.env.<environment>.example`) after each deployment.
 
 Browser-facing environment visibility:
 
