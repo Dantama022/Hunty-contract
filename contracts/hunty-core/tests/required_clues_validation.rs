@@ -1,11 +1,10 @@
 /// Required Clues Validation Tests
 /// Tests that hunt activation requires at least one required clue to succeed.
-/// 
+///
 /// Acceptance Criteria:
 /// - Create hunt, add only optional clues
 /// - Attempt activation → should fail with NoRequiredClues
 /// - Add one required clue → activation should succeed
-
 use hunty_core::HuntyCore;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, Env, String};
@@ -48,14 +47,8 @@ fn test_activate_hunt_with_zero_required_clues_fails() {
 
         // Add 5 optional clues (is_required = false)
         for i in 0..5 {
-            let question = String::from_str(
-                env,
-                &format!("Optional question {}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("Optional answer {}", i),
-            );
+            let question = String::from_str(env, &format!("Optional question {}", i));
+            let answer = String::from_str(env, &format!("Optional answer {}", i));
             HuntyCore::add_clue(
                 env.clone(),
                 hunt_id,
@@ -107,14 +100,8 @@ fn test_activate_hunt_with_one_required_clue_succeeds() {
 
         // Add 3 optional clues
         for i in 0..3 {
-            let question = String::from_str(
-                env,
-                &format!("Optional question {}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("Optional answer {}", i),
-            );
+            let question = String::from_str(env, &format!("Optional question {}", i));
+            let answer = String::from_str(env, &format!("Optional answer {}", i));
             HuntyCore::add_clue(
                 env.clone(),
                 hunt_id,
@@ -146,7 +133,10 @@ fn test_activate_hunt_with_one_required_clue_succeeds() {
 
         // Activate the hunt - should succeed
         let result = HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone());
-        assert!(result.is_ok(), "Activation should succeed with at least one required clue");
+        assert!(
+            result.is_ok(),
+            "Activation should succeed with at least one required clue"
+        );
 
         // Verify hunt status changed to Active
         let activated_hunt = HuntyCore::get_hunt(env.clone(), hunt_id).unwrap();
@@ -183,24 +173,9 @@ fn test_activate_hunt_after_adding_required_clue() {
 
         // Add 3 optional clues
         for i in 0..3 {
-            let question = String::from_str(
-                env,
-                &format!("Optional question {}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("Optional answer {}", i),
-            );
-            HuntyCore::add_clue(
-                env.clone(),
-                hunt_id,
-                question,
-                answer,
-                10,
-                false,
-                None,
-            )
-            .unwrap();
+            let question = String::from_str(env, &format!("Optional question {}", i));
+            let answer = String::from_str(env, &format!("Optional answer {}", i));
+            HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false, None).unwrap();
         }
 
         // Verify hunt has 3 clues but 0 required
@@ -210,7 +185,10 @@ fn test_activate_hunt_after_adding_required_clue() {
 
         // Try to activate - should fail
         let result = HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone());
-        assert!(result.is_err(), "Activation should fail with only optional clues");
+        assert!(
+            result.is_err(),
+            "Activation should fail with only optional clues"
+        );
 
         // Now add a required clue
         HuntyCore::add_clue(
@@ -231,7 +209,10 @@ fn test_activate_hunt_after_adding_required_clue() {
 
         // Try to activate again - should succeed
         let result = HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone());
-        assert!(result.is_ok(), "Activation should succeed after adding required clue");
+        assert!(
+            result.is_ok(),
+            "Activation should succeed after adding required clue"
+        );
     });
 }
 
@@ -260,46 +241,16 @@ fn test_activate_hunt_with_multiple_required_clues_succeeds() {
 
         // Add 2 optional clues
         for i in 0..2 {
-            let question = String::from_str(
-                env,
-                &format!("Optional question {}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("Optional answer {}", i),
-            );
-            HuntyCore::add_clue(
-                env.clone(),
-                hunt_id,
-                question,
-                answer,
-                10,
-                false,
-                None,
-            )
-            .unwrap();
+            let question = String::from_str(env, &format!("Optional question {}", i));
+            let answer = String::from_str(env, &format!("Optional answer {}", i));
+            HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 10, false, None).unwrap();
         }
 
         // Add 3 required clues
         for i in 0..3 {
-            let question = String::from_str(
-                env,
-                &format!("Required question {}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("Required answer {}", i),
-            );
-            HuntyCore::add_clue(
-                env.clone(),
-                hunt_id,
-                question,
-                answer,
-                20,
-                true,
-                None,
-            )
-            .unwrap();
+            let question = String::from_str(env, &format!("Required question {}", i));
+            let answer = String::from_str(env, &format!("Required answer {}", i));
+            HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 20, true, None).unwrap();
         }
 
         // Verify hunt has 5 total clues with 3 required
@@ -341,14 +292,8 @@ fn test_activate_hunt_all_clues_required_succeeds() {
 
         // Add 5 required clues (all are required)
         for i in 0..5 {
-            let question = String::from_str(
-                env,
-                &format!("Required question {}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("Required answer {}", i),
-            );
+            let question = String::from_str(env, &format!("Required question {}", i));
+            let answer = String::from_str(env, &format!("Required answer {}", i));
             HuntyCore::add_clue(
                 env.clone(),
                 hunt_id,
@@ -368,7 +313,10 @@ fn test_activate_hunt_all_clues_required_succeeds() {
 
         // Activate the hunt - should succeed
         let result = HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone());
-        assert!(result.is_ok(), "Activation should succeed when all clues are required");
+        assert!(
+            result.is_ok(),
+            "Activation should succeed when all clues are required"
+        );
     });
 }
 
@@ -402,7 +350,10 @@ fn test_cannot_activate_hunt_with_only_required_clues_zero() {
 
         // Try to activate - should fail with NoCluesAdded error (because total_clues == 0)
         let result = HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone());
-        assert!(result.is_err(), "Activation should fail with no clues at all");
+        assert!(
+            result.is_err(),
+            "Activation should fail with no clues at all"
+        );
     });
 }
 
@@ -431,14 +382,8 @@ fn test_required_clue_count_tracks_correctly() {
 
         // Add clues and track required_clues count after each addition
         for i in 0..10 {
-            let question = String::from_str(
-                env,
-                &format!("Question {}", i),
-            );
-            let answer = String::from_str(
-                env,
-                &format!("Answer {}", i),
-            );
+            let question = String::from_str(env, &format!("Question {}", i));
+            let answer = String::from_str(env, &format!("Answer {}", i));
             let is_required = i % 2 == 0; // Even clues are required, odd are optional
 
             HuntyCore::add_clue(
@@ -458,8 +403,7 @@ fn test_required_clue_count_tracks_correctly() {
             assert_eq!(
                 hunt.required_clues, expected_required as u32,
                 "Required clues count should be {} after adding clue {}",
-                expected_required,
-                i
+                expected_required, i
             );
         }
 
@@ -470,7 +414,10 @@ fn test_required_clue_count_tracks_correctly() {
 
         // Activation should succeed
         let result = HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone());
-        assert!(result.is_ok(), "Activation should succeed with required clues present");
+        assert!(
+            result.is_ok(),
+            "Activation should succeed with required clues present"
+        );
     });
 }
 
@@ -559,8 +506,7 @@ fn test_unauthorized_user_cannot_activate() {
         .unwrap();
 
         // Unauthorized user tries to activate - should fail with Unauthorized
-        let result =
-            HuntyCore::activate_hunt(env.clone(), hunt_id, unauthorized_user.clone());
+        let result = HuntyCore::activate_hunt(env.clone(), hunt_id, unauthorized_user.clone());
         assert!(
             result.is_err(),
             "Unauthorized user should not be able to activate hunt"

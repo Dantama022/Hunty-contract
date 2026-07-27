@@ -28,7 +28,11 @@ impl NftRewardMigration {
         admin: &Address,
         target_version: u32,
     ) -> Result<UpgradeProposal, UpgradeAuthError> {
-        UpgradeAuthorization::require_admin(env, admin, UpgradeAuthorization::get_upgrade_admin(env))?;
+        UpgradeAuthorization::require_admin(
+            env,
+            admin,
+            UpgradeAuthorization::get_upgrade_admin(env),
+        )?;
         let now = env.ledger().timestamp();
         let proposal = UpgradeAuthorization::propose_upgrade(env, admin, target_version, now);
         Ok(proposal)
@@ -39,7 +43,11 @@ impl NftRewardMigration {
         admin: &Address,
         delay_seconds: u64,
     ) -> Result<(), UpgradeAuthError> {
-        UpgradeAuthorization::require_admin(env, admin, UpgradeAuthorization::get_upgrade_admin(env))?;
+        UpgradeAuthorization::require_admin(
+            env,
+            admin,
+            UpgradeAuthorization::get_upgrade_admin(env),
+        )?;
         UpgradeAuthorization::set_timelock_seconds(env, delay_seconds);
         Ok(())
     }
@@ -52,7 +60,11 @@ impl NftRewardMigration {
         UpgradeAuthorization::get_timelock_seconds(env)
     }
 
-    pub fn get_upgrade_history(env: &Env, offset: u32, limit: u32) -> soroban_sdk::Vec<UpgradeHistoryEntry> {
+    pub fn get_upgrade_history(
+        env: &Env,
+        offset: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<UpgradeHistoryEntry> {
         UpgradeAuthorization::get_history(env, offset, limit)
     }
 
@@ -138,9 +150,17 @@ impl NftRewardMigration {
     }
 
     /// Restores the schema version saved before the last migration.
-    pub fn rollback_migration(env: &Env, admin: &Address) -> Result<MigrationReport, UpgradeAuthError> {
-        UpgradeAuthorization::require_admin(env, admin, UpgradeAuthorization::get_upgrade_admin(env))?;
-        let previous = MigrationFramework::rollback_version(env).ok_or(UpgradeAuthError::NoProposal)?;
+    pub fn rollback_migration(
+        env: &Env,
+        admin: &Address,
+    ) -> Result<MigrationReport, UpgradeAuthError> {
+        UpgradeAuthorization::require_admin(
+            env,
+            admin,
+            UpgradeAuthorization::get_upgrade_admin(env),
+        )?;
+        let previous =
+            MigrationFramework::rollback_version(env).ok_or(UpgradeAuthError::NoProposal)?;
         let current = MigrationFramework::detect_version(env);
         MigrationFramework::set_version(env, previous);
         MigrationFramework::clear_rollback(env);

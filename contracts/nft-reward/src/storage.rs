@@ -1,5 +1,5 @@
-use crate::{CollectionMetadata, NftData, NftCore, NftMetadata};
-use soroban_sdk::{symbol_short, Address, Env, String, Vec, Symbol};
+use crate::{CollectionMetadata, NftCore, NftData, NftMetadata};
+use soroban_sdk::{symbol_short, Address, Env, String, Symbol, Vec};
 
 /// Storage layer for NFTs.
 pub struct Storage;
@@ -14,9 +14,6 @@ impl Storage {
     const OWNER_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ONFC");
     const MAX_SUPPLY_KEY: soroban_sdk::Symbol = symbol_short!("MAXS");
     const INITIALIZED_KEY: soroban_sdk::Symbol = symbol_short!("INIT");
-    const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMN");
-    const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MNTR");
-    const REWARD_MGR_KEY: soroban_sdk::Symbol = symbol_short!("RWMG");
     const COLLECTION_METADATA_KEY: soroban_sdk::Symbol = symbol_short!("COLL");
     const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMIN");
     const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MNTR");
@@ -28,6 +25,13 @@ impl Storage {
     const ALL_NFTS_KEY: soroban_sdk::Symbol = symbol_short!("ALLNFT");
     const NFT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("NFTV");
     const CONTRACT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("CTRV");
+    // Keys referenced by storage helpers (must stay unique within this module)
+    const NFT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("NV");
+    const HUNT_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("HN");
+    const ALL_NFTS_KEY: soroban_sdk::Symbol = symbol_short!("AN");
+    const TOTAL_HUNTS_KEY: soroban_sdk::Symbol = symbol_short!("TH");
+    const TOTAL_OWNERS_KEY: soroban_sdk::Symbol = symbol_short!("TO");
+    const CONTRACT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("CV");
 
     fn nft_key(nft_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::NFT_KEY, nft_id)
@@ -73,6 +77,17 @@ impl Storage {
         (Self::MINTER_KEY, minter.clone())
     }
 
+    fn operator_key(
+        owner: &Address,
+        operator: &Address,
+    ) -> (soroban_sdk::Symbol, Address, Address) {
+        (symbol_short!("OPKEY"), owner.clone(), operator.clone())
+    }
+
+    fn locker_key(locker: &Address) -> (soroban_sdk::Symbol, Address) {
+        (symbol_short!("LOCKR"), locker.clone())
+    }
+
     fn authorized_contract_key(contract: &Address) -> (soroban_sdk::Symbol, Address) {
         (symbol_short!("AUTH"), contract.clone())
     }
@@ -80,6 +95,8 @@ impl Storage {
     pub fn is_initialized(env: &Env) -> bool {
         env.storage().instance().has(&Self::INITIALIZED_KEY)
             || env.storage().persistent().has(&Self::INITIALIZED_KEY)
+    }
+
     pub fn remove_nft(env: &Env, nft_id: u64) {
         let key = Self::nft_key(nft_id);
         env.storage().persistent().remove(&key);
@@ -95,21 +112,16 @@ impl Storage {
 
     // --- Reward Manager ---
 
-    pub fn save_reward_manager(env: &Env, reward_mgr: &Address) {
-        env.storage().instance().set(&Self::REWARD_MGR_KEY, reward_mgr);
-    }
-
-    pub fn get_reward_manager(env: &Env) -> Option<Address> {
-        env.storage().instance().get(&Self::REWARD_MGR_KEY)
-    }
-
-    // --- Max supply ---
     pub fn set_reward_manager(env: &Env, address: &Address) {
         env.storage().instance().set(&Self::REWARD_MGR_KEY, address);
     }
 
     pub fn save_reward_manager(env: &Env, address: &Address) {
         env.storage().instance().set(&Self::REWARD_MGR_KEY, address);
+    }
+
+    pub fn get_reward_manager(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&Self::REWARD_MGR_KEY)
     }
 
     pub fn get_max_supply(env: &Env) -> Option<u64> {
@@ -121,8 +133,6 @@ impl Storage {
             .persistent()
             .get::<_, Option<u64>>(&Self::MAX_SUPPLY_KEY)
             .unwrap_or(None)
-    pub fn get_reward_manager(env: &Env) -> Option<Address> {
-        env.storage().instance().get(&Self::REWARD_MGR_KEY)
     }
 
     // --- Minter whitelist (reserved for admin-gated minting) ---
@@ -148,7 +158,10 @@ impl Storage {
     // --- Authorized cross-contract callers ---
 
     pub fn has_authorized_contracts(env: &Env) -> bool {
-        env.storage().instance().get(&Self::HAS_AUTH_KEY).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&Self::HAS_AUTH_KEY)
+            .unwrap_or(false)
     }
 
     pub fn add_authorized_contract(env: &Env, contract: &Address) {
@@ -196,14 +209,16 @@ impl Storage {
         // Check if NFT ID already exists to avoid duplicates
         if all_nfts.first_index_of(nft.nft_id).is_none() {
             all_nfts.push_back(nft.nft_id);
-            env.storage().persistent().set(&Self::ALL_NFTS_KEY, &all_nfts);
+            env.storage()
+                .persistent()
+                .set(&Self::ALL_NFTS_KEY, &all_nfts);
         }
     }
 
     pub fn get_nft(env: &Env, nft_id: u64) -> Option<NftData> {
         let core_key = Self::nft_core_key(nft_id);
         let core: Option<NftCore> = env.storage().persistent().get(&core_key);
-        
+
         let meta_key = Self::nft_metadata_key(nft_id);
         let meta: Option<NftMetadata> = env.storage().persistent().get(&meta_key);
 
@@ -241,7 +256,9 @@ impl Storage {
             .unwrap_or_else(|| Vec::new(env));
         if let Some(idx) = all_nfts.first_index_of(nft_id) {
             all_nfts.remove(idx);
-            env.storage().persistent().set(&Self::ALL_NFTS_KEY, &all_nfts);
+            env.storage()
+                .persistent()
+                .set(&Self::ALL_NFTS_KEY, &all_nfts);
         }
     }
 

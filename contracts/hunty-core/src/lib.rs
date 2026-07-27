@@ -2,22 +2,17 @@
 use crate::errors::{HuntError, HuntErrorCode};
 use crate::storage::{HuntCache, Storage};
 use crate::types::{
-    AnswerIncorrectEvent, BatchClueInput, Clue, ClueAddedEvent, ClueCompletedEvent, ClueInfo,
-    ClueRemovedEvent, Hunt, HuntActivatedEvent, HuntCancelledEvent, HuntCompletedEvent,
-    HuntCreatedEvent, HuntDeactivatedEvent, HuntStatistics, HuntStatus, LeaderboardEntry,
-    PlayerProgress, PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, TimeBonusConfig,
-    AnswerIncorrectEvent, Clue, ClueAddedEvent, ClueAliasesAddedEvent, ClueCompletedEvent,
-    ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt, HuntActivatedEvent,
-    HuntArchivedEvent, HuntCache, HuntCancelledEvent, HuntClosedEvent, HuntCompletedEvent,
-    HuntCreatedEvent,
-    HuntDeactivatedEvent, HuntDescriptionUpdatedEvent, HuntReactivatedEvent, HuntStatistics,
-    HuntStatus, HuntStatusChangedEvent, LeaderboardEntry, LeaderboardIndexEntry, PlayerProgress,
-    PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, RewardManagerSetEvent,
+    AnswerIncorrectEvent, BatchClueInput, Clue, ClueAddedEvent, ClueAliasesAddedEvent,
+    ClueCompletedEvent, ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt,
+    HuntActivatedEvent, HuntArchivedEvent, HuntCancelledEvent, HuntClosedEvent, HuntCompletedEvent,
+    HuntCreatedEvent, HuntDeactivatedEvent, HuntDescriptionUpdatedEvent, HuntReactivatedEvent,
+    HuntStatistics, HuntStatus, HuntStatusChangedEvent, LeaderboardEntry, LeaderboardIndexEntry,
+    PlayerProgress, PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, RewardManagerSetEvent,
     TimeBonusConfig,
 };
 use reward_interface::RewardErrorCode;
 use soroban_sdk::{
-    contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, String, Symbol, Val, Vec,
+    contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, Val, Vec,
 };
 
 const MAX_TITLE_BYTES: u32 = 200;
@@ -126,6 +121,7 @@ impl HuntyCore {
         end_time: Option<u64>,
         max_submissions_per_minute: u32,
         start_multiplier_bps: Option<u32>,
+        default_points: Option<u32>,
     ) -> Result<u64, HuntErrorCode> {
         monitoring::Monitoring::record_invocation(&env, 50_000, true);
         if Storage::is_creator_blacklisted(&env, &creator) {
@@ -187,6 +183,7 @@ impl HuntyCore {
             registration_deadline: 0,
             allow_partial_scoring: false,
             team_mode: false,
+            default_points: default_points.unwrap_or(100),
         };
 
         // Store the hunt
@@ -239,6 +236,7 @@ impl HuntyCore {
             None,
             template_hunt.max_submissions_per_minute,
             Some(template_hunt.start_multiplier_bps),
+            Some(template_hunt.default_points),
         )?;
 
         let template_clues =
@@ -478,6 +476,7 @@ impl HuntyCore {
             points,
             is_required,
             difficulty,
+            weight,
         )?;
         let mut updated = hunt;
         Self::sync_hunt_clue_counts(&env, hunt_id, &mut updated);
@@ -503,13 +502,6 @@ impl HuntyCore {
 
         let existing = Storage::get_clue_counter(&env, hunt_id);
         if existing.saturating_add(clues.len()) > MAX_CLUES_PER_HUNT {
-        // Fast validation using instance cache (cheaper than persistent read)
-        let cache = Self::get_hunt_cache_or_load(&env, hunt_id)?;
-        if cache.status != HuntStatus::Draft {
-            return Err(HuntErrorCode::InvalidHuntStatus);
-        }
-        cache.creator.require_auth();
-        if Storage::get_clue_counter(&env, hunt_id) >= MAX_CLUES_PER_HUNT {
             return Err(HuntErrorCode::from(HuntError::TooManyClues {
                 hunt_id,
                 limit: MAX_CLUES_PER_HUNT,
@@ -527,7 +519,8 @@ impl HuntyCore {
                 clue.answer,
                 clue.points,
                 clue.is_required,
-                clue.difficulty,
+                Some(clue.difficulty),
+                None, // weight defaults to 1 in insert_clue
             )?;
             clue_ids.push_back(clue_id);
         }
@@ -547,9 +540,11 @@ impl HuntyCore {
         answer: String,
         points: u32,
         is_required: bool,
-        difficulty: u8,
+        difficulty: Option<u32>,
+        weight: Option<u32>,
     ) -> Result<u32, HuntErrorCode> {
-        if difficulty == 0 || difficulty > 10 {
+        let difficulty_val = difficulty.unwrap_or(1);
+        if difficulty_val == 0 || difficulty_val > 10 {
             return Err(HuntErrorCode::InvalidDifficulty);
         }
 
@@ -557,67 +552,89 @@ impl HuntyCore {
         if qlen == 0 || qlen > MAX_QUESTION_LENGTH {
             return Err(HuntErrorCode::InvalidQuestion);
         }
+
+        // Get hunt to access default_points
+        let hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
+        
+        // Apply default_points when clue points is 0
+        let final_points = if points == 0 {
+            hunt.default_points
+        } else {
+            points
+        };
+
         if points == 0 {
             return Err(HuntErrorCode::InvalidPoints);
         }
-        let answer_hash =
-            Self::normalize_and_hash_answer(env, &answer).map_err(HuntErrorCode::from)?;
-        let clue_id = Storage::next_clue_id(env, hunt_id);
-        let mut answer_hashes: Vec<BytesN<32>> = Vec::new(env);
         let question = crate::sanitization::StringSanitizer::sanitize(
-            &env,
+            env,
             &question,
             MAX_QUESTION_LENGTH,
             false,
         )
         .map_err(|_| HuntErrorCode::InvalidQuestion)?;
-        let weight = weight.unwrap_or(1);
-        if weight == 0 {
+
+        let weight_val = weight.unwrap_or(1);
+        if weight_val == 0 {
             return Err(HuntErrorCode::from(HuntError::InvalidWeight {
-                value: weight,
+                value: weight_val,
             }));
         }
+
         let clue_id = Storage::next_clue_id(&env, hunt_id);
         let answer_hash = Self::normalize_and_hash_answer(&env, hunt_id, clue_id, &answer)
             .map_err(HuntErrorCode::from)?;
         let mut answer_hashes = Vec::new(&env);
         answer_hashes.push_back(answer_hash);
+        
+        let answer_hash =
+            Self::normalize_and_hash_answer(env, &answer).map_err(HuntErrorCode::from)?;
+        let clue_id = Storage::next_clue_id(env, hunt_id);
+        let mut answer_hashes: Vec<BytesN<32>> = Vec::new(env);
+        answer_hashes.push_back(answer_hash);
+        let difficulty_u32 = difficulty as u32;
+        let weight = 1u32;
         let clue = Clue {
             clue_id,
             question: question.clone(),
             answer_hashes,
-            points,
+            points: final_points,
             is_required,
-            difficulty: difficulty.unwrap_or(1),
+            difficulty: difficulty_val,
+            weight: weight_val,
+            hint: None,
+            hint_penalty_points: 0,
+        };
+        
+        Storage::save_clue(&env, hunt_id, &clue);
+        
+        let mut updated = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
+            difficulty: difficulty_u32,
             weight,
             hint: None,
             hint_penalty_points: 0,
         };
         Storage::save_clue(env, hunt_id, &clue);
-        let event = ClueAddedEvent {
-            hunt_id,
-            clue_id,
-            creator: creator.clone(),
-            points,
-            is_required,
-            difficulty,
-        Storage::save_clue(&env, hunt_id, &clue);
-        let mut updated = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
+        let mut updated = Storage::get_hunt_or_error(env, hunt_id).map_err(HuntErrorCode::from)?;
         updated.total_clues += 1;
         if is_required {
             updated.required_clues += 1;
         }
         Self::recalculate_hunt_difficulty(&env, hunt_id, &mut updated);
         Storage::save_hunt(&env, &updated);
+        
+        Self::recalculate_hunt_difficulty(env, hunt_id, &mut updated);
+        Storage::save_hunt(env, &updated);
         let event = ClueAddedEvent {
             hunt_id,
             clue_id,
-            creator: updated.creator.clone(),
+            creator: creator.clone(),
             question,
-            points,
+            points: final_points,
             is_required,
-            difficulty,
-            difficulty: difficulty.unwrap_or(1),
+            difficulty: difficulty_val,
+            weight: weight_val,
+            difficulty: difficulty_u32,
             weight,
         };
         env.events()
@@ -1339,9 +1356,9 @@ impl HuntyCore {
             return Err(HuntErrorCode::Unauthorized);
         }
 
-
         // Cannot cancel a completed hunt
-        if hunt.status == HuntStatus::Completed {
+
+        // Cannot cancel a completed or already-cancelled hunt
         if cache.status == HuntStatus::Completed {
             return Err(HuntErrorCode::InvalidHuntStatus);
         }
@@ -1349,7 +1366,7 @@ impl HuntyCore {
             return Err(HuntErrorCode::InvalidHuntStatus);
         }
 
-        let old_status = cache.status;
+        let old_status = cache.status.clone();
 
         // Load full hunt from persistent for mutation
         let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
