@@ -89,4 +89,16 @@ pub enum RewardErrorCode {
 
     /// Token contract validation failed.
     InvalidTokenContract = 32,
+
+    /// No vesting record exists for the given hunt/player pair.
+    VestingNotStarted = 33,
+
+    /// Player has already claimed the full vested amount.
+    VestingAlreadyClaimed = 34,
+
+    /// Nothing has vested yet (elapsed time is zero or vesting just started).
+    NothingToVest = 35,
+
+    /// The pool does not have vesting configured (vesting_period_secs == 0).
+    VestingNotConfigured = 36,
 }

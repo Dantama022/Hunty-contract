@@ -2,6 +2,7 @@ use soroban_sdk::{symbol_short, Address, Env, Vec};
 
 use crate::types::{
     DistributionRecord, PoolAuditEntry, PoolDistribution, ResolutionStatus, RewardPoolConfig,
+    VestingRecord,
 };
 
 pub struct Storage;
@@ -42,6 +43,9 @@ impl Storage {
     const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
     const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
     const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
+
+    // ========== Vesting ==========
+    const VESTING_KEY: soroban_sdk::Symbol = symbol_short!("VEST");
 
     // ========== Admin ==========
 
@@ -578,6 +582,31 @@ impl Storage {
 
     fn pending_nft_key(hunt_id: u64, player: &Address) -> (soroban_sdk::Symbol, u64, Address) {
         (Self::PENDING_NFT_KEY, hunt_id, player.clone())
+    }
+
+    // ========== Vesting Records ==========
+
+    /// Stores a vesting record for a (hunt_id, player) pair.
+    /// Called at distribution time when vesting_period_secs > 0.
+    pub fn set_vesting_record(
+        env: &Env,
+        hunt_id: u64,
+        player: &Address,
+        record: &VestingRecord,
+    ) {
+        let key = Self::vesting_key(hunt_id, player);
+        env.storage().persistent().set(&key, record);
+    }
+
+    /// Returns the vesting record for a (hunt_id, player) pair, or None if it
+    /// does not exist (i.e. no vesting is pending for this player).
+    pub fn get_vesting_record(env: &Env, hunt_id: u64, player: &Address) -> Option<VestingRecord> {
+        let key = Self::vesting_key(hunt_id, player);
+        env.storage().persistent().get(&key)
+    }
+
+    fn vesting_key(hunt_id: u64, player: &Address) -> (soroban_sdk::Symbol, u64, Address) {
+        (Self::VESTING_KEY, hunt_id, player.clone())
     }
 
     // --- Contract version ---
