@@ -300,7 +300,7 @@ impl HuntyCore {
 
         let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
 
-        if caller != hunt.creator {
+        if !Storage::is_authorized_creator_or_co_creator(&env, hunt_id, &caller) {
             return Err(HuntErrorCode::Unauthorized);
         }
 
@@ -343,7 +343,7 @@ impl HuntyCore {
         }
 
         let mut hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
-        if hunt.creator != caller {
+        if !Storage::is_authorized_creator_or_co_creator(&env, hunt_id, &caller) {
             return Err(HuntErrorCode::Unauthorized);
         }
         if hunt.status != HuntStatus::Draft {
@@ -366,7 +366,7 @@ impl HuntyCore {
         caller.require_auth();
 
         let mut hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
-        if hunt.creator != caller {
+        if !Storage::is_authorized_creator_or_co_creator(&env, hunt_id, &caller) {
             return Err(HuntErrorCode::Unauthorized);
         }
 
@@ -406,7 +406,7 @@ impl HuntyCore {
         caller.require_auth();
 
         let mut hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
-        if hunt.creator != caller {
+        if !Storage::is_authorized_creator_or_co_creator(&env, hunt_id, &caller) {
             return Err(HuntErrorCode::Unauthorized);
         }
         if hunt.status != HuntStatus::Draft {
@@ -793,7 +793,7 @@ impl HuntyCore {
     ) -> Result<(), HuntErrorCode> {
         caller.require_auth();
         let mut hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
-        if hunt.creator != caller {
+        if !Storage::is_authorized_creator_or_co_creator(&env, hunt_id, &caller) {
             return Err(HuntErrorCode::Unauthorized);
         }
         if hunt.status != HuntStatus::Draft {
@@ -852,7 +852,7 @@ impl HuntyCore {
     ) -> Result<(), HuntErrorCode> {
         caller.require_auth();
         let mut hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
-        if hunt.creator != caller {
+        if !Storage::is_authorized_creator_or_co_creator(&env, hunt_id, &caller) {
             return Err(HuntErrorCode::Unauthorized);
         }
         if let Some(value) = difficulty_override {
@@ -877,7 +877,7 @@ impl HuntyCore {
     ) -> Result<(), HuntErrorCode> {
         caller.require_auth();
         let hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
-        if hunt.creator != caller {
+        if !Storage::is_authorized_creator_or_co_creator(&env, hunt_id, &caller) {
             return Err(HuntErrorCode::Unauthorized);
         }
         if hunt.status != HuntStatus::Draft {
@@ -3039,6 +3039,40 @@ impl HuntyCore {
 
     pub fn get_view_only_list(env: Env, hunt_id: u64) -> Vec<Address> {
         Storage::get_view_only_list(&env, hunt_id)
+    }
+
+    pub fn add_co_creator(
+        env: Env,
+        hunt_id: u64,
+        creator: Address,
+        new_co_creator: Address,
+    ) -> Result<(), HuntErrorCode> {
+        creator.require_auth();
+        let hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+        if hunt.creator != creator {
+            return Err(HuntErrorCode::Unauthorized);
+        }
+        Storage::add_co_creator(&env, hunt_id, &new_co_creator);
+        Ok(())
+    }
+
+    pub fn remove_co_creator(
+        env: Env,
+        hunt_id: u64,
+        creator: Address,
+        co_creator_to_remove: Address,
+    ) -> Result<(), HuntErrorCode> {
+        creator.require_auth();
+        let hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+        if hunt.creator != creator {
+            return Err(HuntErrorCode::Unauthorized);
+        }
+        Storage::remove_co_creator(&env, hunt_id, &co_creator_to_remove);
+        Ok(())
+    }
+
+    pub fn get_co_creators(env: Env, hunt_id: u64) -> Vec<Address> {
+        Storage::get_co_creators(&env, hunt_id)
     }
 
     /// Step one of a two-step admin key rotation.

@@ -1438,4 +1438,37 @@ impl Storage {
         let key = Self::creator_daily_count_key(creator, day);
         env.storage().persistent().set(&key, &count);
     }
+
+    // ========== Co-Creators Storage Functions ==========
+    pub fn get_co_creators(env: &Env, hunt_id: u64) -> Vec<Address> {
+        let key = (symbol_short!("COCRTR"), hunt_id);
+        env.storage().instance().get(&key).unwrap_or_else(|| Vec::new(env))
+    }
+    pub fn add_co_creator(env: &Env, hunt_id: u64, address: &Address) {
+        let key = (symbol_short!("COCRTR"), hunt_id);
+        let mut list = Self::get_co_creators(env, hunt_id);
+        if list.first_index_of(address).is_none() {
+            list.push_back(address.clone());
+            env.storage().instance().set(&key, &list);
+            env.storage().instance().extend_ttl(518400, 518400);
+        }
+    }
+    pub fn remove_co_creator(env: &Env, hunt_id: u64, address: &Address) {
+        let key = (symbol_short!("COCRTR"), hunt_id);
+        let mut list = Self::get_co_creators(env, hunt_id);
+        if let Some(idx) = list.first_index_of(address) {
+            list.remove(idx);
+            env.storage().instance().set(&key, &list);
+        }
+    }
+    pub fn is_authorized_creator_or_co_creator(env: &Env, hunt_id: u64, caller: &Address) -> bool {
+        if let Some(hunt) = Self::get_hunt(env, hunt_id) {
+            if &hunt.creator == caller {
+                return true;
+            }
+            let co_creators = Self::get_co_creators(env, hunt_id);
+            return co_creators.first_index_of(caller).is_some();
+        }
+        false
+    }
 }
