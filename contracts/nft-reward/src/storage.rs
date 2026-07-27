@@ -22,6 +22,13 @@ impl Storage {
     const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MNTR");
     const REWARD_MGR_KEY: soroban_sdk::Symbol = symbol_short!("RWDMGR");
     const HAS_AUTH_KEY: soroban_sdk::Symbol = symbol_short!("HAUTH");
+    // Keys referenced by storage helpers (must stay unique within this module)
+    const NFT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("NV");
+    const HUNT_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("HN");
+    const ALL_NFTS_KEY: soroban_sdk::Symbol = symbol_short!("AN");
+    const TOTAL_HUNTS_KEY: soroban_sdk::Symbol = symbol_short!("TH");
+    const TOTAL_OWNERS_KEY: soroban_sdk::Symbol = symbol_short!("TO");
+    const CONTRACT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("CV");
 
     fn nft_key(nft_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::NFT_KEY, nft_id)
@@ -65,6 +72,17 @@ impl Storage {
 
     fn minter_key(minter: &Address) -> (soroban_sdk::Symbol, Address) {
         (Self::MINTER_KEY, minter.clone())
+    }
+
+    fn operator_key(
+        owner: &Address,
+        operator: &Address,
+    ) -> (soroban_sdk::Symbol, Address, Address) {
+        (symbol_short!("OPKEY"), owner.clone(), operator.clone())
+    }
+
+    fn locker_key(locker: &Address) -> (soroban_sdk::Symbol, Address) {
+        (symbol_short!("LOCKR"), locker.clone())
     }
 
     fn authorized_contract_key(contract: &Address) -> (soroban_sdk::Symbol, Address) {

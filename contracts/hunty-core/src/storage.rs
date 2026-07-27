@@ -85,6 +85,11 @@ impl Storage {
     const REQUIRED_CLUES_KEY: soroban_sdk::Symbol = symbol_short!("REQCL");
     const CACHE_HIT_KEY: soroban_sdk::Symbol = symbol_short!("CHIT");
     const CACHE_MISS_KEY: soroban_sdk::Symbol = symbol_short!("CMISS");
+    const PLAYER_HUNTS_KEY: soroban_sdk::Symbol = symbol_short!("PHNT");
+    const TEAM_KEY: soroban_sdk::Symbol = symbol_short!("TEAM");
+    const TEAM_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("TMCT");
+    const PLAYER_TEAM_KEY: soroban_sdk::Symbol = symbol_short!("PLTM");
+    const TEAM_PROGRESS_KEY: soroban_sdk::Symbol = symbol_short!("TMPR");
 
     // Pause functions (granular: registrations, answers, rewards)
     pub fn set_pause_registrations(env: &Env, paused: bool) {
