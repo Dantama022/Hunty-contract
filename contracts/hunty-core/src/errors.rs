@@ -50,6 +50,7 @@ pub enum HuntErrorCode {
     TooManyCategories = 43,
     InvalidCategory = 44,
     InvalidDifficulty = 45,
+    HuntNotStarted = 46,
 }
 
 #[derive(Debug)]
@@ -155,6 +156,10 @@ pub enum HuntError {
     InvalidCategory,
     InvalidDifficulty {
         value: u32,
+    },
+    HuntNotStarted {
+        start_time: u64,
+        current_time: u64,
     },
 }
 
@@ -323,6 +328,16 @@ impl fmt::Display for HuntError {
             HuntError::InvalidDifficulty { value } => {
                 write!(f, "Invalid difficulty value: {}", value)
             }
+            HuntError::HuntNotStarted {
+                start_time,
+                current_time,
+            } => {
+                write!(
+                    f,
+                    "Hunt has not started yet (start_time: {}, current_time: {})",
+                    start_time, current_time
+                )
+            }
         }
     }
 }
@@ -373,6 +388,7 @@ impl From<HuntError> for HuntErrorCode {
             HuntError::TooManyCategories { .. } => HuntErrorCode::TooManyCategories,
             HuntError::InvalidCategory => HuntErrorCode::InvalidCategory,
             HuntError::InvalidDifficulty { .. } => HuntErrorCode::InvalidDifficulty,
+            HuntError::HuntNotStarted { .. } => HuntErrorCode::HuntNotStarted,
         }
     }
 }

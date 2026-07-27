@@ -102,7 +102,9 @@ impl HuntyCore {
     /// * `creator` - The address of the hunt creator (typically use env.invoker() from the caller)
     /// * `title` - The title of the hunt (max 200 characters)
     /// * `description` - The description of the hunt (max 2000 characters)
-    /// * `start_time` - Optional start timestamp (0 means no start time restriction)
+    /// * `start_time` - Optional start timestamp. When set, players cannot register
+    ///   or submit answers until the ledger timestamp reaches this value. 0 means
+    ///   no start time restriction (immediately playable once activated).
     /// * `end_time` - Optional end timestamp (0 means no end time restriction)
     ///
     /// # Returns
@@ -117,7 +119,7 @@ impl HuntyCore {
         creator: Address,
         title: String,
         description: String,
-        _start_time: Option<u64>,
+        start_time: Option<u64>,
         end_time: Option<u64>,
         max_submissions_per_minute: u32,
         start_multiplier_bps: Option<u32>,
@@ -169,6 +171,7 @@ impl HuntyCore {
             status: HuntStatus::Draft,
             created_at: current_time,
             activated_at: 0, // Will be set when hunt is activated
+            start_time: start_time.unwrap_or(0),
             end_time: end_time.unwrap_or(0),
             reward_config,
             time_bonus_start_bps: None,
@@ -1122,6 +1125,7 @@ impl HuntyCore {
         let cache = Self::get_hunt_cache_or_load(env, hunt_id)?;
         let current_time = env.ledger().timestamp();
         if cache.status != HuntStatus::Active
+            || (cache.start_time != 0 && current_time < cache.start_time)
             || (cache.end_time != 0 && current_time >= cache.end_time)
         {
             return Err(HuntErrorCode::HuntNotActive);
@@ -1883,12 +1887,17 @@ impl HuntyCore {
             return Err(HuntErrorCode::InvalidHuntStatus);
         }
 
+        let current_time = env.ledger().timestamp();
+
+        // Reject registration if the hunt has not started yet
+        if hunt.start_time != 0 && current_time < hunt.start_time {
+            return Err(HuntErrorCode::HuntNotStarted);
+        }
+
         // Reject public registration for private hunts
         if hunt.is_private {
             return Err(HuntErrorCode::HuntIsPrivate);
         }
-
-        let current_time = env.ledger().timestamp();
 
         // Cache read: cheaper than loading full Hunt from persistent storage
         let _cache = Self::validate_hunt_active_cached(&env, hunt_id)?;
@@ -2146,6 +2155,11 @@ impl HuntyCore {
         }
 
         let current_time = env.ledger().timestamp();
+
+        // Reject registration if the hunt has not started yet
+        if hunt.start_time != 0 && current_time < hunt.start_time {
+            return Err(HuntErrorCode::HuntNotStarted);
+        }
 
         // Cache read: cheaper than loading full Hunt from persistent storage
         let _cache = Self::validate_hunt_active_cached(&env, hunt_id)?;
