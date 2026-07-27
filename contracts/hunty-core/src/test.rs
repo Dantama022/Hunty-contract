@@ -6489,6 +6489,7 @@ mod test {
             status: crate::types::HuntStatus::Active,
             created_at: 0,
             activated_at: 0,
+            start_time: 0,
             end_time: 0,
             reward_config: crate::types::HuntRewardConfig::new(&env, 0, false, None, 0, 0, 0),
             total_clues: 0,

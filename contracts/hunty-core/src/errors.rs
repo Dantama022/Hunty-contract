@@ -51,6 +51,7 @@ pub enum HuntErrorCode {
     InvalidCategory = 44,
     InvalidDifficulty = 45,
     CorruptPlayerProgress = 46,
+    HuntNotStarted = 46,
 }
 
 #[derive(Debug)]
@@ -160,6 +161,9 @@ pub enum HuntError {
     CorruptPlayerProgress {
         hunt_id: u64,
         player: soroban_sdk::Address,
+    HuntNotStarted {
+        start_time: u64,
+        current_time: u64,
     },
 }
 
@@ -330,6 +334,15 @@ impl fmt::Display for HuntError {
             }
             HuntError::CorruptPlayerProgress { hunt_id, player } => {
                 write!(f, "Corrupt player progress record for hunt {} player {:?}", hunt_id, player)
+            HuntError::HuntNotStarted {
+                start_time,
+                current_time,
+            } => {
+                write!(
+                    f,
+                    "Hunt has not started yet (start_time: {}, current_time: {})",
+                    start_time, current_time
+                )
             }
         }
     }
@@ -382,6 +395,7 @@ impl From<HuntError> for HuntErrorCode {
             HuntError::InvalidCategory => HuntErrorCode::InvalidCategory,
             HuntError::InvalidDifficulty { .. } => HuntErrorCode::InvalidDifficulty,
             HuntError::CorruptPlayerProgress { .. } => HuntErrorCode::CorruptPlayerProgress,
+            HuntError::HuntNotStarted { .. } => HuntErrorCode::HuntNotStarted,
         }
     }
 }

@@ -39,6 +39,7 @@ pub struct Hunt {
     pub status: HuntStatus,
     pub created_at: u64,
     pub activated_at: u64,
+    pub start_time: u64,
     pub end_time: u64,
     pub reward_config: RewardConfig,
     pub time_bonus_start_bps: Option<u32>,
@@ -66,6 +67,7 @@ pub struct HuntCache {
     pub hunt_id: u64,
     pub creator: Address,
     pub status: HuntStatus,
+    pub start_time: u64,
     pub end_time: u64,
     pub total_clues: u32,
     pub required_clues: u32,
@@ -78,6 +80,7 @@ impl HuntCache {
             hunt_id: hunt.hunt_id,
             creator: hunt.creator.clone(),
             status: hunt.status.clone(),
+            start_time: hunt.start_time,
             end_time: hunt.end_time,
             total_clues: hunt.total_clues,
             required_clues: hunt.required_clues,
@@ -389,7 +392,9 @@ impl PlayerProgress {
 
 impl Hunt {
     pub fn is_active(&self, current_time: u64) -> bool {
-        self.status == HuntStatus::Active && (self.end_time == 0 || current_time < self.end_time)
+        self.status == HuntStatus::Active
+            && (self.start_time == 0 || current_time >= self.start_time)
+            && (self.end_time == 0 || current_time < self.end_time)
     }
 
     pub fn has_rewards_available(&self) -> bool {

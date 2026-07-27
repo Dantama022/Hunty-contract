@@ -224,6 +224,7 @@ impl Storage {
                     status: legacy.status,
                     created_at: legacy.created_at,
                     activated_at: legacy.activated_at,
+                    start_time: 0,
                     end_time: legacy.end_time,
                     reward_config: legacy.reward_config,
                     time_bonus_start_bps: legacy.time_bonus_start_bps,
