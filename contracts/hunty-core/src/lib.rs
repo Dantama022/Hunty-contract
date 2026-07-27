@@ -126,7 +126,7 @@ impl HuntyCore {
         default_points: Option<u32>,
     ) -> Result<u64, HuntErrorCode> {
         monitoring::Monitoring::record_invocation(&env, 50_000, true);
-        if Storage::is_creator_blacklisted(&env, &creator) {
+        if Storage::is_blacklisted(&env, &creator) {
             return Err(HuntErrorCode::AddressBlacklisted);
         }
 

@@ -4,7 +4,7 @@ use crate::types::{
     StoredPlayerProgress,
 };
 use soroban_sdk::xdr::FromXdr;
-use soroban_sdk::{contracttype, symbol_short, Address, Env, IntoVal, Map, TryFromVal, Val, Vec};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, IntoVal, TryFromVal, Val, Vec};
 // Instance TTL constants used by blacklist and contract-pause storage.
 const INSTANCE_TTL_THRESHOLD: u32 = 518_400;
 const INSTANCE_TTL_EXTEND_TO: u32 = 518_400;
@@ -81,7 +81,6 @@ impl Storage {
     const PAUSE_ANSWERS_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE_A");
     const PAUSE_REWARDS_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE_RW");
     const CONTRACT_PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("CPAUSED");
-    const BLACKLIST_KEY: soroban_sdk::Symbol = symbol_short!("BLKLST");
     const REQUIRED_CLUES_KEY: soroban_sdk::Symbol = symbol_short!("REQCL");
     const CACHE_HIT_KEY: soroban_sdk::Symbol = symbol_short!("CHIT");
     const CACHE_MISS_KEY: soroban_sdk::Symbol = symbol_short!("CMISS");
@@ -1231,50 +1230,52 @@ impl Storage {
             .unwrap_or(false)
     }
 
-    // Blacklist functions for backward compatibility
-    const BLACKLIST_VEC_KEY: soroban_sdk::Symbol = symbol_short!("BLKLST_V");
-    pub fn set_blacklisted(env: &Env, address: &Address, blacklisted: bool) {
-        if blacklisted {
-            let mut list: Vec<Address> = env
-                .storage()
-                .instance()
-                .get(&Self::BLACKLIST_VEC_KEY)
-                .unwrap_or_else(|| Vec::new(env));
-            if list.first_index_of(address).is_none() {
-                list.push_back(address.clone());
-                env.storage()
-                    .instance()
-                    .set(&Self::BLACKLIST_VEC_KEY, &list);
-            }
-        } else {
-            let mut list: Vec<Address> = env
-                .storage()
-                .instance()
-                .get(&Self::BLACKLIST_VEC_KEY)
-                .unwrap_or_else(|| Vec::new(env));
-            if let Some(idx) = list.first_index_of(address) {
-                list.remove(idx);
-                env.storage()
-                    .instance()
-                    .set(&Self::BLACKLIST_VEC_KEY, &list);
-            }
-        }
-    }
-    pub fn is_blacklisted_vec(env: &Env, address: &Address) -> bool {
-        let list: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&Self::BLACKLIST_VEC_KEY)
-            .unwrap_or_else(|| Vec::new(env));
-        list.first_index_of(address).is_some()
+    // ========== Blacklist Storage Functions ==========
+    //
+    // Single canonical representation: one persistent key per address,
+    // stored under (symbol_short!("BLKLST"), address).  All paths
+    // (contract entry-points *and* admin helpers) must go through
+    // `set_blacklisted` / `is_blacklisted` defined here.
+
+    fn blacklist_key(creator: &Address) -> (soroban_sdk::Symbol, Address) {
+        (symbol_short!("BLKLST"), creator.clone())
     }
 
-    // Helper functions for emergency stop (placeholder for now)
+    /// Adds `creator` to the blacklist.
+    pub fn blacklist_creator(env: &Env, creator: &Address) {
+        env.storage()
+            .instance()
+            .set(&Self::blacklist_key(creator), &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    }
+
+    /// Removes `creator` from the blacklist.
+    pub fn remove_from_blacklist(env: &Env, creator: &Address) {
+        env.storage()
+            .instance()
+            .remove(&Self::blacklist_key(creator));
+    }
+
+    /// Returns `true` if `creator` is currently blacklisted.
+    /// This is the single canonical reader used by **both** the public
+    /// `is_blacklisted` query *and* the `create_hunt` enforcement check.
+    pub fn is_blacklisted(env: &Env, creator: &Address) -> bool {
+        env.storage()
+            .instance()
+            .get::<_, bool>(&Self::blacklist_key(creator))
+            .unwrap_or(false)
+    }
+
+    // ========== Emergency-stop helpers (placeholder) ==========
+
     pub fn get_active_hunt_ids(_env: &Env) -> Vec<u64> {
         Vec::new(_env)
     }
+
     pub fn set_hunt_status(_env: &Env, _hunt_id: u64, _status: crate::types::HuntStatus) {
-        // Placeholder
+        // Placeholder – full implementation would update the hunt's status field in persistent storage.
     }
 
     /// Adds an address to the global view-only list.
@@ -1373,55 +1374,6 @@ impl Storage {
         env.storage()
             .persistent()
             .has(&Self::ban_key(hunt_id, player))
-    }
-
-    // ========== Blacklist Storage Functions ==========
-
-    fn blacklist_key(creator: &Address) -> (soroban_sdk::Symbol, Address) {
-        (symbol_short!("BLKLST"), creator.clone())
-    }
-
-    pub fn blacklist_creator(env: &Env, creator: &Address) {
-        env.storage()
-            .instance()
-            .set(&Self::blacklist_key(creator), &true);
-    }
-
-    pub fn remove_from_blacklist(env: &Env, creator: &Address) {
-        env.storage()
-            .instance()
-            .remove(&Self::blacklist_key(creator));
-    }
-
-    pub fn is_blacklisted(env: &Env, creator: &Address) -> bool {
-        env.storage()
-            .instance()
-            .get::<_, bool>(&Self::blacklist_key(creator))
-            .unwrap_or(false)
-    }
-
-    pub fn set_creator_blacklisted(env: &Env, creator: &Address, blacklisted: bool) {
-        let mut blacklist: Map<Address, bool> = env
-            .storage()
-            .instance()
-            .get(&Self::BLACKLIST_KEY)
-            .unwrap_or(Map::new(env));
-        blacklist.set(creator.clone(), blacklisted);
-        env.storage()
-            .instance()
-            .set(&Self::BLACKLIST_KEY, &blacklist);
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
-    }
-
-    pub fn is_creator_blacklisted(env: &Env, creator: &Address) -> bool {
-        let blacklist: Map<Address, bool> = env
-            .storage()
-            .instance()
-            .get(&Self::BLACKLIST_KEY)
-            .unwrap_or(Map::new(env));
-        blacklist.get(creator.clone()).unwrap_or(false)
     }
 
     // ========== Hunt creation rate limiting ==========
