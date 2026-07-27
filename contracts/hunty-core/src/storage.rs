@@ -273,7 +273,7 @@ impl Storage {
     /// * `Ok(Hunt)` if the hunt exists
     /// * `Err(HuntError)` if the hunt is not found
     pub fn get_hunt_or_error(env: &Env, hunt_id: u64) -> Result<Hunt, HuntError> {
-        Self::get_hunt(env, hunt_id).ok_or(HuntError::HuntNotFound { hunt_id })
+        Self::get_hunt(env, hunt_id).ok_or(HuntError::HuntNotFound)
     }
 
     // ========== Hunt Cache Functions (instance storage) ==========
@@ -446,7 +446,7 @@ impl Storage {
     /// * `Ok(Clue)` if the clue exists
     /// * `Err(HuntError)` if the clue is not found
     pub fn get_clue_or_error(env: &Env, hunt_id: u64, clue_id: u32) -> Result<Clue, HuntError> {
-        Self::get_clue(env, hunt_id, clue_id).ok_or(HuntError::ClueNotFound { hunt_id })
+        Self::get_clue(env, hunt_id, clue_id).ok_or(HuntError::ClueNotFound)
     }
 
     pub fn list_clues_for_hunt(env: &Env, hunt_id: u64, offset: u32, limit: u32) -> Vec<Clue> {
@@ -540,10 +540,7 @@ impl Storage {
             }
         }
 
-        Err(HuntError::CorruptPlayerProgress {
-            hunt_id,
-            player: player.clone(),
-        })
+        Err(HuntError::CorruptPlayerProgress)
     }
 
     /// Retrieves player progress as an Option.
@@ -576,7 +573,7 @@ impl Storage {
     ) -> Result<PlayerProgress, HuntError> {
         match Self::try_get_player_progress(env, hunt_id, player)? {
             Some(progress) => Ok(progress),
-            None => Err(HuntError::PlayerNotRegistered { hunt_id }),
+            None => Err(HuntError::PlayerNotRegistered),
         }
     }
 
