@@ -44,7 +44,7 @@ pub fn blacklist_add(env: &Env, admin: &Address, target: &Address) {
     admin.require_auth();
     assert!(Storage::is_admin(env, admin), "Unauthorized");
 
-    Storage::set_blacklisted(env, target, true);
+    Storage::blacklist_creator(env, target);
 
     let mut details = Vec::new(env);
     details.push_back((symbol_short!("target"), target.to_string()));
@@ -58,7 +58,7 @@ pub fn blacklist_remove(env: &Env, admin: &Address, target: &Address) {
     admin.require_auth();
     assert!(Storage::is_admin(env, admin), "Unauthorized");
 
-    Storage::set_blacklisted(env, target, false);
+    Storage::remove_from_blacklist(env, target);
 
     let mut details = Vec::new(env);
     details.push_back((symbol_short!("target"), target.to_string()));

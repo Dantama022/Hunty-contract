@@ -3666,6 +3666,89 @@ mod test {
         });
     }
 
+    /// Verifies that a single storage representation underlies both the
+    /// public `is_blacklisted` query and the `create_hunt` enforcement path.
+    ///
+    /// The bug this guards against: before consolidation there were three
+    /// independent blacklist stores (`BLKLST_V`, per-address `BLKLST`, and a
+    /// `Map<Address,bool>` also named `BLKLST`).  `blacklist_creator` wrote to
+    /// the per-address key; `is_creator_blacklisted` (used by `create_hunt`)
+    /// read from the Map key.  An admin blacklisting a creator via the public
+    /// entry-point would see `is_blacklisted() == true` while `create_hunt`
+    /// still succeeded.
+    #[test]
+    fn test_blacklist_same_storage_for_query_and_enforcement() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let creator = Address::generate(&env);
+
+        with_core_contract(&env, |env, _cid| {
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
+
+            // Before blacklisting: query returns false, hunt creation succeeds.
+            assert!(!HuntyCore::is_blacklisted(env.clone(), creator.clone()));
+            HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Hunt Before"),
+                String::from_str(env, "Should succeed"),
+                None,
+                None,
+                5u32,
+                None,
+            )
+            .expect("create_hunt must succeed before blacklisting");
+
+            // Blacklist the creator via the public admin entry-point.
+            HuntyCore::blacklist_creator(env.clone(), admin.clone(), creator.clone()).unwrap();
+
+            // The public query must reflect the new state.
+            assert!(
+                HuntyCore::is_blacklisted(env.clone(), creator.clone()),
+                "is_blacklisted query must return true after blacklisting"
+            );
+
+            // create_hunt must be blocked by the *same* storage entry.
+            let err = HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Blacklisted Hunt"),
+                String::from_str(env, "Must not be created"),
+                None,
+                None,
+                5u32,
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(
+                err,
+                HuntErrorCode::AddressBlacklisted,
+                "create_hunt must reject a blacklisted creator"
+            );
+
+            // After removal: query returns false and creation succeeds again.
+            HuntyCore::remove_from_blacklist(env.clone(), admin.clone(), creator.clone()).unwrap();
+            assert!(
+                !HuntyCore::is_blacklisted(env.clone(), creator.clone()),
+                "is_blacklisted must return false after removal"
+            );
+            HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Hunt After"),
+                String::from_str(env, "Should succeed again"),
+                None,
+                None,
+                5u32,
+                None,
+            )
+            .expect("create_hunt must succeed after removal from blacklist");
+        });
+    }
+
     #[test]
     fn test_pause_contract_blocks_registration_until_unpaused() {
         let env = Env::default();
