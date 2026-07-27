@@ -235,6 +235,10 @@ impl Storage {
                     max_submissions_per_minute: legacy.max_submissions_per_minute,
                     max_attempts_per_clue: legacy.max_attempts_per_clue,
                     start_multiplier_bps: legacy.start_multiplier_bps,
+                    registration_deadline: 0,
+                    allow_partial_scoring: false,
+                    team_mode: false,
+                    default_points: 100, // Default value for legacy hunts
                 })
         });
         if let Some(ref hunt) = result {
@@ -513,6 +517,7 @@ impl Storage {
         env.storage()
             .persistent()
             .get::<_, StoredPlayerProgress>(&key)
+            .map(|stored| PlayerProgress::from_stored(env, stored, player.clone(), hunt_id, activated_at))
             .map(|stored| {
                 PlayerProgress::from_stored(env, stored, player.clone(), hunt_id, activated_at)
             })

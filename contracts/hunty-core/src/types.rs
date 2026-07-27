@@ -56,6 +56,8 @@ pub struct Hunt {
     pub allow_partial_scoring: bool,
     /// When true, players may form teams and share clue progress.
     pub team_mode: bool,
+    /// Default point value applied to clues with 0 points. Clue-level points override this.
+    pub default_points: u32,
 }
 
 #[contracttype]
@@ -108,7 +110,7 @@ pub struct BatchClueInput {
     pub points: u32,
     pub is_required: bool,
     /// Difficulty multiplier (1-10). Points earned = points * difficulty.
-    pub difficulty: u8,
+    pub difficulty: u32,
 }
 
 /// Clue info returned by get_clue/list_clues. Excludes answer hash.
@@ -178,7 +180,6 @@ pub struct Location {
 
 
 /// Internal compact storage representation of player progress.
-/// Internal storage representation of player progress.
 /// Does not store `player` or `hunt_id` — those are already the storage key.
 ///
 /// ## Compact encoding
@@ -186,14 +187,12 @@ pub struct Location {
 ///   saving 4 bytes each vs full `u64` UNIX timestamps. The max delta (~136 years)
 ///   far exceeds any realistic hunt duration.
 /// - Boolean fields (`is_completed`, `reward_claimed`) are packed into `flags`.
-/// - `clue_attempts` values use `u32` (Soroban's smallest XDR integer).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct StoredPlayerProgress {
     pub completed_clues: Vec<u32>,
     pub hinted_clues: Vec<u32>,
     pub total_score: u32,
-    pub required_completed_count: u32,
 
     /// Seconds elapsed from hunt `activated_at` to player registration.
     /// Reconstruct absolute: `activated_at + started_at_delta`.
@@ -206,6 +205,8 @@ pub struct StoredPlayerProgress {
     /// Bit flags for boolean fields to reduce storage footprint.
     /// BIT0 (1): is_completed
     /// BIT1 (2): reward_claimed
+    /// BIT2–BIT31: reserved for future use
+    pub flags: u32,
     /// BIT2–BIT7: reserved for future use
     pub flags: u8,
     pub recent_submissions: Vec<u64>,
@@ -269,6 +270,15 @@ impl PlayerProgress {
     /// `activated_at` is the hunt's activation timestamp, used to delta-encode
     /// `started_at` and `completed_at` into compact `u32` offsets.
     pub fn to_stored(&self, activated_at: u64) -> StoredPlayerProgress {
+        let mut flags: u32 = 0;
+        if self.is_completed {
+            flags |= 0b0000_0001;
+        }
+        if self.reward_claimed {
+            flags |= 0b0000_0010;
+        }
+
+        // Delta-encode timestamps relative to hunt activation.
         let started_at_delta = self.started_at.saturating_sub(activated_at) as u32;
         let completed_at_delta = if self.completed_at == 0 {
             0u32
@@ -280,9 +290,9 @@ impl PlayerProgress {
             completed_clues: self.completed_clues.clone(),
             hinted_clues: self.hinted_clues.clone(),
             total_score: self.total_score,
-            required_completed_count: self.required_completed_count,
             started_at_delta,
             completed_at_delta,
+            flags,
             flags: Self::bools_to_flags(self.is_completed, self.reward_claimed),
             recent_submissions: self.recent_submissions.clone(),
             clue_last_attempts: self.clue_last_attempts.clone(),
@@ -320,7 +330,6 @@ impl PlayerProgress {
             completed_clue_index,
             hinted_clues: stored.hinted_clues,
             total_score: stored.total_score,
-            required_completed_count: stored.required_completed_count,
             started_at,
             completed_at,
             is_completed: (stored.flags & 0b0000_0001) != 0,
