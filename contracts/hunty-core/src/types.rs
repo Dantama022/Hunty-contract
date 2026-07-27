@@ -210,8 +210,6 @@ pub struct StoredPlayerProgress {
     /// BIT1 (2): reward_claimed
     /// BIT2–BIT31: reserved for future use
     pub flags: u32,
-    /// BIT2–BIT7: reserved for future use
-    pub flags: u8,
     pub recent_submissions: Vec<u64>,
     pub clue_last_attempts: Map<u32, u64>,
 }
@@ -296,7 +294,6 @@ impl PlayerProgress {
             started_at_delta,
             completed_at_delta,
             flags,
-            flags: Self::bools_to_flags(self.is_completed, self.reward_claimed),
             recent_submissions: self.recent_submissions.clone(),
             clue_last_attempts: self.clue_last_attempts.clone(),
         }
