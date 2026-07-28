@@ -1,7 +1,13 @@
 WASM_DIR := target/wasm32v1-none/release
 BINDINGS_DIR := bindings
 PYTHON ?= python3
+SHA256 ?= sha256sum
 DOCS_OUTPUT := docs/contract-api.md
+
+# macOS compatibility: check for shasum (pre-installed on macOS) and fall back to sha256sum.
+ifeq ($(shell uname -s),Darwin)
+  SHA256 = shasum -a 256
+endif
 
 .PHONY: build bindings all clean generate-api-docs check setup-githooks
 
@@ -17,7 +23,7 @@ generate-api-docs:
 # Stamps both into the binding's package.json under `contractHash` and
 # `sourceCommit` so consumers can verify which build produced the bindings.
 define stamp-binding
-	contract_hash=$$(sha256sum "$(WASM_DIR)/$(1)" | cut -d' ' -f1); \
+	contract_hash=$$($(SHA256) "$(WASM_DIR)/$(1)" | cut -d' ' -f1); \
 	commit_hash=$$(git rev-parse HEAD 2>/dev/null || echo "unknown"); \
 	pkg="$(BINDINGS_DIR)/$(2)/package.json"; \
 	if [ -f "$$pkg" ]; then \
