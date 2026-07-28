@@ -27,10 +27,14 @@ bindings: build
 		--output-dir $(BINDINGS_DIR)/nft-reward \
 		--overwrite
 
+validate-config:
+	bash scripts/validate_placeholders.sh
+
 check:
 	cargo fmt --all -- --check
 	cargo clippy --workspace -- -D warnings
 	cargo test --workspace --locked
+	$(MAKE) validate-config
 
 setup-githooks:
 	git config core.hooksPath .githooks
