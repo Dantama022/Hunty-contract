@@ -3,7 +3,7 @@ BINDINGS_DIR := bindings
 PYTHON ?= python3
 DOCS_OUTPUT := docs/contract-api.md
 
-.PHONY: build bindings all clean generate-api-docs check setup-githooks
+.PHONY: build bindings all clean generate-api-docs check setup-githooks benchmark-compare
 
 all: build bindings
 
@@ -31,6 +31,9 @@ check:
 	cargo fmt --all -- --check
 	cargo clippy --workspace -- -D warnings
 	cargo test --workspace --locked
+
+benchmark-compare:
+	node scripts/ci/compare_gas_benchmarks.mjs
 
 setup-githooks:
 	git config core.hooksPath .githooks
