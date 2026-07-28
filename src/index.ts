@@ -67,7 +67,7 @@ app.get('/admin/config', (req, res) => {
 
 app.patch('/admin/config', (req, res) => {
   const secret = req.headers['x-admin-secret'] as string;
-  if (!secret) {
+  if (!secret || secret !== config.adminSecret) {
     res.status(403).json({ error: 'Unauthorized' });
     return;
   }
@@ -78,9 +78,9 @@ app.patch('/admin/config', (req, res) => {
     res.status(400).json({ error: (err as Error).message });
   }
 });
-
 app.listen(config.port, () => {
   console.log(`Mint rate limiter API running on port ${config.port} (${config.environment})`);
 });
+
 
 export { app, limiter, config };
