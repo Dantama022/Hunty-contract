@@ -96,6 +96,22 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace -- -D warnings
 
+  wasm-abi:
+    name: WASM ABI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Check WASM ABI matches expected functions
+        run: make check-wasm-abi
+
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
