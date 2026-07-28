@@ -10,6 +10,11 @@ use crate::nft_handler::NftHandler;
 use crate::storage::Storage;
 use crate::token_handler::TokenHandler;
 pub use crate::types::{
+    resolve_tier_amount, tiers_are_strictly_ascending, BatchDistributionEntry, DistributionMode,
+    DistributionProof, DistributionRecord, DistributionStatus, PendingNftMint, PoolAuditEntry,
+    PoolDistribution, PoolOperation, ResolutionStatus, RewardConfig, RewardPoolConfig,
+    RewardPoolStatistics, RewardPoolStatus, SemVer, TierError, TimeBasedRewardTier,
+    ValidationResult, VestingRecord, VestingStatus,
     resolve_tier_amount, tiers_are_strictly_ascending, BatchDistributionEntry,
     DistributionAnalytics, DistributionMode, DistributionProof, DistributionRecord,
     DistributionStatus, PendingNftMint, PoolAuditEntry, PoolDistribution, PoolOperation,
@@ -216,6 +221,29 @@ pub struct EmergencyWithdrawalLogEntry {
 pub struct PoolAuditLogResponse {
     pub entries: Vec<PoolAuditEntry>,
     pub total: u64,
+}
+
+/// Event emitted when a vesting schedule is created for a player.
+/// Tokens are locked in the contract and released proportionally over time.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VestingCreatedEvent {
+    pub hunt_id: u64,
+    pub player: Address,
+    pub total_amount: i128,
+    pub vesting_period_secs: u64,
+    pub start_time: u64,
+}
+
+/// Event emitted when a player successfully claims a portion of their vested rewards.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VestedClaimedEvent {
+    pub hunt_id: u64,
+    pub player: Address,
+    pub claimed_amount: i128,
+    pub total_claimed: i128,
+    pub fully_vested: bool,
 }
 
 #[contractimpl]
@@ -453,6 +481,7 @@ impl RewardManager {
             target_amount: 0,
             min_distribution_interval_secs: 0,
             distribution_mode: DistributionMode::Fixed,
+            vesting_period_secs: 0,
             claim_deadline: 0,
         };
         Storage::set_pool_config(&env, hunt_id, &config);
@@ -1413,20 +1442,58 @@ impl RewardManager {
                 }
             }
 
-            XlmHandler::distribute_xlm(
-                &env,
-                token_address,
-                &contract_addr,
-                &player_address,
-                amount,
-            );
-            xlm_amount = amount;
-            Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
+            // Vesting path: when the pool has a vesting period configured, do NOT
+            // transfer tokens immediately. Instead, lock the amount in a VestingRecord
+            // so the player can claim proportionally over time via `claim_vested`.
+            if pool_config.vesting_period_secs > 0 {
+                let now = env.ledger().timestamp();
+                let vesting_record = VestingRecord {
+                    start_time: now,
+                    total_amount: amount,
+                    claimed_amount: 0,
+                    vesting_period_secs: pool_config.vesting_period_secs,
+                };
+                Storage::set_vesting_record(&env, hunt_id, &player_address, &vesting_record);
+                // The pool balance is reserved (deducted) at vesting creation so that
+                // concurrent distributions cannot double-spend the same funds. Tokens
+                // remain in the contract until the player calls `claim_vested`.
+                xlm_amount = amount;
+                Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
 
-            let total_distributed = Storage::get_pool_total_distributed(&env, hunt_id) + amount;
-            Storage::set_pool_total_distributed(&env, hunt_id, total_distributed);
-            let global_total = Storage::get_total_xlm_distributed(&env) + amount;
-            Storage::set_total_xlm_distributed(&env, global_total);
+                let total_distributed =
+                    Storage::get_pool_total_distributed(&env, hunt_id) + amount;
+                Storage::set_pool_total_distributed(&env, hunt_id, total_distributed);
+                let global_total = Storage::get_total_xlm_distributed(&env) + amount;
+                Storage::set_total_xlm_distributed(&env, global_total);
+
+                env.events().publish(
+                    (symbol_short!("VEST_CRT"), hunt_id),
+                    VestingCreatedEvent {
+                        hunt_id,
+                        player: player_address.clone(),
+                        total_amount: amount,
+                        vesting_period_secs: pool_config.vesting_period_secs,
+                        start_time: now,
+                    },
+                );
+            } else {
+                // Instant payout path (no vesting).
+                XlmHandler::distribute_xlm(
+                    &env,
+                    token_address,
+                    &contract_addr,
+                    &player_address,
+                    amount,
+                );
+                xlm_amount = amount;
+                Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
+
+                let total_distributed =
+                    Storage::get_pool_total_distributed(&env, hunt_id) + amount;
+                Storage::set_pool_total_distributed(&env, hunt_id, total_distributed);
+                let global_total = Storage::get_total_xlm_distributed(&env) + amount;
+                Storage::set_total_xlm_distributed(&env, global_total);
+            }
         }
 
         // Route to NFT handler if configured
@@ -2097,6 +2164,166 @@ impl RewardManager {
     /// Returns whether a reward has been distributed to a player for a hunt.
     pub fn is_reward_distributed(env: Env, hunt_id: u64, player: Address) -> bool {
         Storage::is_distributed(&env, hunt_id, &player)
+    }
+
+    // =========================================================================
+    // Vesting schedule
+    // =========================================================================
+
+    /// Sets the vesting period (in seconds) on an existing reward pool.
+    ///
+    /// When `vesting_period_secs > 0`, subsequent `distribute_rewards` calls
+    /// will **not** transfer XLM immediately. Instead a `VestingRecord` is
+    /// stored and the player must call `claim_vested` to receive tokens
+    /// proportionally as time elapses after distribution.
+    ///
+    /// Setting this to `0` disables vesting and reverts to instant payouts for
+    /// future distributions (already-pending vesting records are unaffected).
+    ///
+    /// # Arguments
+    /// * `creator` - Pool owner (must match stored creator)
+    /// * `hunt_id` - The hunt whose pool to configure
+    /// * `vesting_period_secs` - Vesting duration in seconds (0 = disabled)
+    ///
+    /// # Errors
+    /// * `PoolNotFound` - Pool does not exist
+    /// * `Unauthorized` - Caller is not the pool creator
+    pub fn set_vesting_period_secs(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        vesting_period_secs: u64,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        config.vesting_period_secs = vesting_period_secs;
+        Storage::set_pool_config(&env, hunt_id, &config);
+
+        Ok(())
+    }
+
+    /// Claims the proportionally vested XLM reward for the caller.
+    ///
+    /// The claimable amount is: `total_amount * min(elapsed / vesting_period_secs, 1) - claimed_amount`.
+    ///
+    /// The player can call this any number of times over the vesting period.
+    /// Each call transfers whatever has newly vested since the last claim.
+    /// Once `claimed_amount == total_amount` the schedule is fully exhausted.
+    ///
+    /// # Arguments
+    /// * `player` - The player claiming their vested reward
+    /// * `hunt_id` - The hunt whose vesting record to claim from
+    ///
+    /// # Returns
+    /// The XLM amount (in stroops) transferred to the player.
+    ///
+    /// # Errors
+    /// * `VestingNotStarted` - No vesting record exists for this (hunt_id, player)
+    /// * `VestingAlreadyClaimed` - Full vesting amount has already been claimed
+    /// * `NothingToVest` - Nothing has vested yet at the current timestamp
+    /// * `InsufficientPool` - Contract token balance is too low (should not normally occur)
+    pub fn claim_vested(
+        env: Env,
+        player: Address,
+        hunt_id: u64,
+    ) -> Result<i128, RewardErrorCode> {
+        player.require_auth();
+
+        let mut record = Storage::get_vesting_record(&env, hunt_id, &player)
+            .ok_or(RewardErrorCode::VestingNotStarted)?;
+
+        if record.claimed_amount >= record.total_amount {
+            return Err(RewardErrorCode::VestingAlreadyClaimed);
+        }
+
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(record.start_time);
+
+        // Calculate how much has vested: total * min(elapsed / period, 1).
+        // Use integer arithmetic with full precision: multiply first, then divide.
+        let vested_amount = if elapsed >= record.vesting_period_secs {
+            record.total_amount
+        } else {
+            // vested = total_amount * elapsed / vesting_period_secs
+            record
+                .total_amount
+                .checked_mul(elapsed as i128)
+                .unwrap_or(record.total_amount)
+                / (record.vesting_period_secs as i128)
+        };
+
+        let claimable = vested_amount - record.claimed_amount;
+        if claimable <= 0 {
+            return Err(RewardErrorCode::NothingToVest);
+        }
+
+        // Retrieve token address from pool config for the transfer.
+        let pool_config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+        let token_address = &pool_config.token_address;
+
+        let contract_addr = env.current_contract_address();
+        XlmHandler::distribute_xlm(&env, token_address, &contract_addr, &player, claimable);
+
+        // Update claimed amount.
+        record.claimed_amount += claimable;
+        Storage::set_vesting_record(&env, hunt_id, &player, &record);
+
+        let fully_vested = record.claimed_amount >= record.total_amount;
+
+        env.events().publish(
+            (symbol_short!("VEST_CLM"), hunt_id),
+            VestedClaimedEvent {
+                hunt_id,
+                player: player.clone(),
+                claimed_amount: claimable,
+                total_claimed: record.claimed_amount,
+                fully_vested,
+            },
+        );
+
+        Ok(claimable)
+    }
+
+    /// Returns the current vesting status for a (hunt_id, player) pair.
+    ///
+    /// Returns `None` when no vesting record exists (i.e. the pool either had
+    /// no vesting configured or the player has not completed that hunt yet).
+    pub fn get_vesting_status(env: Env, hunt_id: u64, player: Address) -> Option<VestingStatus> {
+        let record = Storage::get_vesting_record(&env, hunt_id, &player)?;
+
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(record.start_time);
+
+        let vested_amount = if elapsed >= record.vesting_period_secs {
+            record.total_amount
+        } else {
+            record
+                .total_amount
+                .checked_mul(elapsed as i128)
+                .unwrap_or(record.total_amount)
+                / (record.vesting_period_secs as i128)
+        };
+
+        let claimable_amount = (vested_amount - record.claimed_amount).max(0);
+        let fully_vested = record.claimed_amount >= record.total_amount;
+
+        Some(VestingStatus {
+            start_time: record.start_time,
+            vesting_period_secs: record.vesting_period_secs,
+            total_amount: record.total_amount,
+            claimed_amount: record.claimed_amount,
+            vested_amount,
+            claimable_amount,
+            fully_vested,
+        })
     }
 
     /// Manually resolves a distribution that failed mid-execution.
