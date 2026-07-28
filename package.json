@@ -1,4 +1,5 @@
 {
+  "name": "hunty-mint-rate-limiter",
   "name": "hunty-contract",
   "version": "1.0.0",
   "description": "Rate limiter for NFT minting per address",

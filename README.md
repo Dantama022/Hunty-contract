@@ -284,11 +284,12 @@ flowchart TD
 
 ## Architecture
 
-Hunty consists of three main smart contracts:
+Hunty consists of three main smart contracts and an off-chain rate-limiting microservice:
 
 1. **HuntyCore** - Main game logic, hunt management, and clue verification
 2. **RewardManager** - Coordinates reward distribution (XLM and NFT)
 3. **NftReward** - Handles NFT minting and transfer for completion rewards
+4. **Off-Chain Mint Rate Limiter** (`src/`) - Express microservice protecting the NFT minting path against per-address abuse and spam
 
 ### Contract Responsibilities
 
@@ -311,6 +312,16 @@ Hunty consists of three main smart contracts:
 - Stores NFT metadata including hunt information
 - Manages NFT ownership and transfers
 - Provides query functions for NFT information
+
+**Off-Chain Mint Rate Limiter Microservice (`src/`):**
+- Serves as an off-chain API layer (`hunty-mint-rate-limiter`) sitting in front of the on-chain NFT reward minting pipeline.
+- Enforces sliding-window rate limits per Stellar wallet address (`maxMints` per `windowMs`) to prevent automated minting abuse, bot spam, and gas exhaustion on the network.
+- Exposes administrative and operational endpoints:
+  - `POST /mint` - Evaluates rate limits for a given player address `{ address }` before initiating the Soroban `NftReward` mint.
+  - `GET /mint/count/:address` - Returns active window mint count for an address.
+  - `GET /health` - Health check returning service status, network environment, RPC endpoint, and contract IDs (`huntyCoreId`, `rewardManagerId`, `nftRewardId`).
+  - `GET /environment` - Renders visual environment badge for non-production environments (`testnet`, `staging`).
+  - `GET /admin/config` & `PATCH /admin/config` - Query and dynamically update rate limit settings at runtime (requires `x-admin-secret` authentication header).
 
 ## Quick Start
 
@@ -455,9 +466,19 @@ hunty-contract/
 │       │   ├── lib.rs
 │       │   └── test.rs
 │       └── Cargo.toml
+├── src/                     # Off-chain Mint Rate Limiter Express service (TypeScript)
+│   ├── index.ts             # Express server setup and route definitions
+│   ├── rateLimiter.ts       # Sliding-window rate limiter implementation
+│   ├── config.ts            # Environment and contract configuration loader
+│   ├── errors.ts            # Custom rate limit error definitions
+│   └── types.ts             # TypeScript interface definitions
+├── scripts/                 # Deployment and environment helper scripts
+│   ├── deploy_contracts.sh # Multi-environment deployment script
+│   └── with-env.mjs         # Environment loader CLI helper
 ├── CONTRIBUTING.md          # Contribution guidelines
 ├── DEVELOPMENT.md          # Development guide
 ├── GITHUB_ISSUES.md         # List of issues for developers
+├── package.json             # Node.js dependencies & scripts (hunty-mint-rate-limiter)
 ├── Cargo.toml               # Workspace configuration
 └── README.md
 ```
