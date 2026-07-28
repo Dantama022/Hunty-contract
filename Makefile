@@ -1,4 +1,4 @@
-WASM_DIR := target/wasm32v1-none/release
+WASM_DIR := target/wasm32-unknown-unknown/release
 BINDINGS_DIR := bindings
 PYTHON ?= python3
 SHA256 ?= sha256sum
@@ -16,7 +16,7 @@ endif
 all: build bindings
 
 build: generate-api-docs
-	stellar contract build
+	cargo build --workspace --target wasm32-unknown-unknown --release
 
 generate-api-docs:
 	$(PYTHON) scripts/generate_api_docs.py --output $(DOCS_OUTPUT)
