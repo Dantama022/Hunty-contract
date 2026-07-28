@@ -98,6 +98,8 @@ jobs:
 
   api-docs:
     name: API Docs
+  wasm-abi:
+    name: WASM ABI
     runs-on: ubuntu-latest
 
     steps:
@@ -114,6 +116,8 @@ jobs:
 
       - name: Check for uncommitted changes in docs
         run: git diff --exit-code docs/contract-api.md
+      - name: Check WASM ABI matches expected functions
+        run: make check-wasm-abi
 
   coverage:
     name: Code Coverage

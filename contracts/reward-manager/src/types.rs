@@ -95,6 +95,9 @@ pub struct RewardPoolConfig {
     /// Address of the hunt creator who owns this pool.
     /// Only the creator is authorized to fund it.
     pub creator: Address,
+    /// Addresses allowed to distribute rewards for this pool.
+    /// Only the creator can manage this list.
+    pub delegates: Vec<Address>,
     /// Minimum XLM amount per distribution. 0 means no minimum enforced.
     pub min_distribution_amount: i128,
     /// Optional time-based reward tiers. When empty, the per-winner amount
@@ -116,6 +119,8 @@ pub struct RewardPoolConfig {
     pub min_distribution_interval_secs: u64,
     /// Distribution mode (Fixed or Proportional).
     pub distribution_mode: DistributionMode,
+    /// Unix timestamp after which claims are no longer allowed (0 = disabled).
+    pub claim_deadline: u64,
 }
 
 /// Full status of a reward pool, returned by get_reward_pool().

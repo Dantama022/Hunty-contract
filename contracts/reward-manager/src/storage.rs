@@ -10,6 +10,7 @@ pub struct Storage;
 impl Storage {
     // Shortened storage prefixes for reward-manager
     const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMI");
+    const PENDING_ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("PADMI");
     const XLM_TOKEN_KEY: soroban_sdk::Symbol = symbol_short!("X");
     const NFT_CONTRACT_KEY: soroban_sdk::Symbol = symbol_short!("NFTA");
     /// Ring-buffer capacity for the per-pool audit log.
@@ -51,6 +52,18 @@ impl Storage {
 
     pub fn get_admin(env: &Env) -> Option<Address> {
         env.storage().persistent().get(&Self::ADMIN_KEY)
+    }
+
+    pub fn set_pending_admin(env: &Env, address: &Address) {
+        env.storage().persistent().set(&Self::PENDING_ADMIN_KEY, address);
+    }
+
+    pub fn get_pending_admin(env: &Env) -> Option<Address> {
+        env.storage().persistent().get(&Self::PENDING_ADMIN_KEY)
+    }
+
+    pub fn clear_pending_admin(env: &Env) {
+        env.storage().persistent().remove(&Self::PENDING_ADMIN_KEY);
     }
 
     // ========== XLM Token Address ==========
