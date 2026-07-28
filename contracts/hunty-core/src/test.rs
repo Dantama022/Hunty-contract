@@ -114,7 +114,7 @@ mod test {
 
     #[test]
     fn test_error_with_context_display() {
-        let err = HuntError::HuntNotFound { hunt_id: 42 };
+        let err = HuntError::HuntNotFound;
         let hunt_error: HuntErrorCode = err.into();
         assert_eq!(hunt_error, HuntErrorCode::HuntNotFound)
     }
@@ -173,16 +173,17 @@ mod test {
     }
 
     #[test]
-    fn test_hunt_not_found_message() {
-        let err = HuntError::HuntNotFound { hunt_id: 42 };
-
-        assert_eq!(err.to_string(), "Hunt not found: ID 42");
+    fn test_hunt_not_found_converts_to_code() {
+        let err = HuntError::HuntNotFound;
+        let code: HuntErrorCode = err.into();
+        assert_eq!(code, HuntErrorCode::HuntNotFound);
     }
 
     #[test]
-    fn test_clue_not_found_message() {
-        let err = HuntError::ClueNotFound { hunt_id: 10 };
-        assert_eq!(err.to_string(), "Clue not found for hunt 10");
+    fn test_clue_not_found_converts_to_code() {
+        let err = HuntError::ClueNotFound;
+        let code: HuntErrorCode = err.into();
+        assert_eq!(code, HuntErrorCode::ClueNotFound);
     }
 
     #[test]
@@ -655,16 +656,10 @@ mod test {
     }
 
     #[test]
-    fn test_insufficient_reward_pool_message() {
-        let err = HuntError::InsufficientRewardPool {
-            required: 10000,
-            available: 500,
-        };
-
-        assert_eq!(
-            err.to_string(),
-            "Insufficient reward pool: required 10000, available 500"
-        );
+    fn test_insufficient_reward_pool_converts_to_code() {
+        let err = HuntError::InsufficientRewardPool;
+        let code: HuntErrorCode = err.into();
+        assert_eq!(code, HuntErrorCode::InsufficientRewardPool);
     }
 
     // ========== create_hunt() Tests ==========
@@ -7990,9 +7985,8 @@ mod test {
         let result = Storage::try_get_player_progress(&env, hunt_id, &player);
         assert!(result.is_err());
         match result {
-            Err(HuntError::CorruptPlayerProgress { hunt_id: err_hunt_id, player: err_player }) => {
-                assert_eq!(err_hunt_id, hunt_id);
-                assert_eq!(err_player, player);
+            Err(HuntError::CorruptPlayerProgress) => {
+                // Payloads stripped; variant still maps to CorruptPlayerProgress
             }
             _ => panic!("Expected CorruptPlayerProgress error"),
         }
