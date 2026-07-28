@@ -95,6 +95,9 @@ pub struct RewardPoolConfig {
     /// Address of the hunt creator who owns this pool.
     /// Only the creator is authorized to fund it.
     pub creator: Address,
+    /// Addresses allowed to distribute rewards for this pool.
+    /// Only the creator can manage this list.
+    pub delegates: Vec<Address>,
     /// Minimum XLM amount per distribution. 0 means no minimum enforced.
     pub min_distribution_amount: i128,
     /// Optional time-based reward tiers. When empty, the per-winner amount
@@ -121,6 +124,8 @@ pub struct RewardPoolConfig {
     /// is created and the player must call `claim_vested` to receive tokens
     /// proportionally as time elapses. 0 means vesting is disabled (instant payout).
     pub vesting_period_secs: u64,
+    /// Unix timestamp after which claims are no longer allowed (0 = disabled).
+    pub claim_deadline: u64,
 }
 
 /// Full status of a reward pool, returned by get_reward_pool().
@@ -271,4 +276,21 @@ pub struct VestingStatus {
     pub claimable_amount: i128,
     /// True once `claimed_amount >= total_amount`.
     pub fully_vested: bool,
+/// Statistical summary of distributions across a reward pool,
+/// returned by get_distribution_analytics().
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DistributionAnalytics {
+    /// Number of distributions included in the analytics window.
+    pub count: u64,
+    /// Total XLM distributed in the analytics window (stroops).
+    pub total: i128,
+    /// Average (mean) XLM amount per distribution (stroops). 0 if count is 0.
+    pub average: i128,
+    /// Median XLM amount across distributions (stroops). 0 if count is 0.
+    pub median: i128,
+    /// Minimum XLM amount in a single distribution (stroops). 0 if count is 0.
+    pub min: i128,
+    /// Maximum XLM amount in a single distribution (stroops). 0 if count is 0.
+    pub max: i128,
 }

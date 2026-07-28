@@ -39,6 +39,7 @@ pub struct Hunt {
     pub status: HuntStatus,
     pub created_at: u64,
     pub activated_at: u64,
+    pub start_time: u64,
     pub end_time: u64,
     pub reward_config: RewardConfig,
     pub time_bonus_start_bps: Option<u32>,
@@ -66,6 +67,7 @@ pub struct HuntCache {
     pub hunt_id: u64,
     pub creator: Address,
     pub status: HuntStatus,
+    pub start_time: u64,
     pub end_time: u64,
     pub total_clues: u32,
     pub required_clues: u32,
@@ -78,6 +80,7 @@ impl HuntCache {
             hunt_id: hunt.hunt_id,
             creator: hunt.creator.clone(),
             status: hunt.status.clone(),
+            start_time: hunt.start_time,
             end_time: hunt.end_time,
             total_clues: hunt.total_clues,
             required_clues: hunt.required_clues,
@@ -207,8 +210,6 @@ pub struct StoredPlayerProgress {
     /// BIT1 (2): reward_claimed
     /// BIT2–BIT31: reserved for future use
     pub flags: u32,
-    /// BIT2–BIT7: reserved for future use
-    pub flags: u8,
     pub recent_submissions: Vec<u64>,
     pub clue_last_attempts: Map<u32, u64>,
 }
@@ -293,7 +294,6 @@ impl PlayerProgress {
             started_at_delta,
             completed_at_delta,
             flags,
-            flags: Self::bools_to_flags(self.is_completed, self.reward_claimed),
             recent_submissions: self.recent_submissions.clone(),
             clue_last_attempts: self.clue_last_attempts.clone(),
         }
@@ -392,7 +392,9 @@ impl PlayerProgress {
 
 impl Hunt {
     pub fn is_active(&self, current_time: u64) -> bool {
-        self.status == HuntStatus::Active && (self.end_time == 0 || current_time < self.end_time)
+        self.status == HuntStatus::Active
+            && (self.start_time == 0 || current_time >= self.start_time)
+            && (self.end_time == 0 || current_time < self.end_time)
     }
 
     pub fn has_rewards_available(&self) -> bool {
@@ -589,6 +591,16 @@ pub struct LeaderboardIndexEntry {
     pub score: u32,
     pub completed_at: u64,
     pub is_completed: bool,
+}
+
+/// Wrapper returned by `get_hunt_leaderboard` that includes truncation
+/// information so callers can tell when the visible entries are incomplete.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeaderboardResult {
+    pub entries: Vec<LeaderboardEntry>,
+    pub total_players: u32,
+    pub truncated: bool,
 }
 
 /// Aggregate statistics for a hunt (read-only query result).

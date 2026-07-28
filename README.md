@@ -3,6 +3,9 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![Soroban](https://img.shields.io/badge/soroban-22.0+-purple.svg)](https://soroban.stellar.org/)
+[![CI](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/ci.yml/badge.svg)](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/ci.yml)
+[![WASM Size](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/wasm-size.yml/badge.svg)](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/wasm-size.yml)
+[![Coverage](https://img.shields.io/badge/coverage-checked_in_CI-blue)](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/ci.yml)
 
 Hunty is a decentralized scavenger hunt game built on Stellar/Soroban. Create thrilling scavenger hunts with multiple clues and challenges, engage players in immersive treasure hunts, and reward them with XLM tokens or exclusive NFTs.
 
@@ -281,11 +284,12 @@ flowchart TD
 
 ## Architecture
 
-Hunty consists of three main smart contracts:
+Hunty consists of three main smart contracts and an off-chain rate-limiting microservice:
 
 1. **HuntyCore** - Main game logic, hunt management, and clue verification
 2. **RewardManager** - Coordinates reward distribution (XLM and NFT)
 3. **NftReward** - Handles NFT minting and transfer for completion rewards
+4. **Off-Chain Mint Rate Limiter** (`src/`) - Express microservice protecting the NFT minting path against per-address abuse and spam
 
 ### Contract Responsibilities
 
@@ -308,6 +312,16 @@ Hunty consists of three main smart contracts:
 - Stores NFT metadata including hunt information
 - Manages NFT ownership and transfers
 - Provides query functions for NFT information
+
+**Off-Chain Mint Rate Limiter Microservice (`src/`):**
+- Serves as an off-chain API layer (`hunty-mint-rate-limiter`) sitting in front of the on-chain NFT reward minting pipeline.
+- Enforces sliding-window rate limits per Stellar wallet address (`maxMints` per `windowMs`) to prevent automated minting abuse, bot spam, and gas exhaustion on the network.
+- Exposes administrative and operational endpoints:
+  - `POST /mint` - Evaluates rate limits for a given player address `{ address }` before initiating the Soroban `NftReward` mint.
+  - `GET /mint/count/:address` - Returns active window mint count for an address.
+  - `GET /health` - Health check returning service status, network environment, RPC endpoint, and contract IDs (`huntyCoreId`, `rewardManagerId`, `nftRewardId`).
+  - `GET /environment` - Renders visual environment badge for non-production environments (`testnet`, `staging`).
+  - `GET /admin/config` & `PATCH /admin/config` - Query and dynamically update rate limit settings at runtime (requires `x-admin-secret` authentication header).
 
 ## Quick Start
 
@@ -334,14 +348,31 @@ cd ../nft-reward && make build
 
 The API is configured with explicit environment files so development/testnet, QA/staging, and mainnet deployments do not share contract addresses or RPC settings.
 
-Available templates:
+Available templates (tracked in git, placeholders only — **never** put real secrets in these):
 
-- `.env.testnet` for development and testnet integration work
-- `.env.staging` for QA/pre-production validation on dedicated staging contracts
-- `.env.mainnet` for production mainnet deployment
+- `.env.testnet.example` for development and testnet integration work
+- `.env.staging.example` for QA/pre-production validation on dedicated staging contracts
+- `.env.mainnet.example` for production mainnet deployment
 - `.env.example` as the shared reference template
 
+Copy the template for your target environment to its unsuffixed name and fill in the real values:
+
+```bash
+cp .env.testnet.example .env.testnet
+cp .env.staging.example .env.staging
+cp .env.mainnet.example .env.mainnet
+```
+
+The working files (`.env`, `.env.testnet`, `.env.staging`, `.env.mainnet`, and any other
+`.env.*`) are git-ignored, so a filled-in `ADMIN_SECRET` can never be committed by
+`git add -A`. Only `.env.example` and `.env.*.example` are negated back into tracking.
+
+> **Never** rename a filled-in file back to `*.example`, and never commit real
+> credentials. Rotate `ADMIN_SECRET` immediately if one is ever pushed.
+
 Required variables are validated when the API starts. Startup fails fast with a clear error if a value is missing, invalid, or still contains a `replace-with-...` placeholder.
+
+The mint rate-limiter API (`src/rateLimiter.ts`) **gates minting with shared Redis state** (`REDIS_URL`). Per-address mint timestamps are stored in Redis so limits survive process restarts and stay correct when multiple API instances run behind a load balancer. An in-memory `Map` is only used inside unit tests.
 
 ```bash
 # Development/testnet
@@ -365,7 +396,8 @@ Contract addresses are tracked per environment in:
 - `config/contracts.staging.json`
 - `config/contracts.mainnet.json`
 
-Keep these files in sync with the matching `.env.<environment>` file after each deployment.
+Keep these files in sync with the matching `.env.<environment>` file (your local copy of
+`.env.<environment>.example`) after each deployment.
 
 Browser-facing environment visibility:
 
@@ -434,9 +466,19 @@ hunty-contract/
 │       │   ├── lib.rs
 │       │   └── test.rs
 │       └── Cargo.toml
+├── src/                     # Off-chain Mint Rate Limiter Express service (TypeScript)
+│   ├── index.ts             # Express server setup and route definitions
+│   ├── rateLimiter.ts       # Sliding-window rate limiter implementation
+│   ├── config.ts            # Environment and contract configuration loader
+│   ├── errors.ts            # Custom rate limit error definitions
+│   └── types.ts             # TypeScript interface definitions
+├── scripts/                 # Deployment and environment helper scripts
+│   ├── deploy_contracts.sh # Multi-environment deployment script
+│   └── with-env.mjs         # Environment loader CLI helper
 ├── CONTRIBUTING.md          # Contribution guidelines
 ├── DEVELOPMENT.md          # Development guide
 ├── GITHUB_ISSUES.md         # List of issues for developers
+├── package.json             # Node.js dependencies & scripts (hunty-mint-rate-limiter)
 ├── Cargo.toml               # Workspace configuration
 └── README.md
 ```
