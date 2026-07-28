@@ -243,6 +243,50 @@ impl RewardManager {
         Ok(())
     }
 
+    /// Step one of a two-step admin key rotation.
+    pub fn propose_new_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), RewardErrorCode> {
+        admin.require_auth();
+
+        let current_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
+        if current_admin != admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        Storage::set_pending_admin(&env, &new_admin);
+        
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "ADMIN"), soroban_sdk::Symbol::new(&env, "ADM_PROP")),
+            (admin, new_admin),
+        );
+
+        Ok(())
+    }
+
+    /// Step two of a two-step admin key rotation.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), RewardErrorCode> {
+        new_admin.require_auth();
+
+        let pending = Storage::get_pending_admin(&env).ok_or(RewardErrorCode::Unauthorized)?;
+        if pending != new_admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        let old_admin = Storage::get_admin(&env);
+        Storage::set_admin(&env, &new_admin);
+        Storage::clear_pending_admin(&env);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "ADMIN"), soroban_sdk::Symbol::new(&env, "ADM_TRF")),
+            (old_admin, new_admin),
+        );
+
+        Ok(())
+    }
+
     /// Sets the default NftReward contract address used for NFT distributions
     /// when a per-call NFT contract is not provided.
     /// Emits an NftContractSetEvent with the old and new contract addresses.
