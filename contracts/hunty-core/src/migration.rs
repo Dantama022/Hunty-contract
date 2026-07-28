@@ -100,12 +100,10 @@ impl HuntyCoreMigration {
                     }
                     current = 1;
                 }
-                1 => {
-                    if !dry_run {
-                        Self::migrate_v1_to_v2(env);
-                    }
-                    current = 2;
-                }
+                // v1 -> v2: not yet implemented.
+                // Add the arm here (and the migrate_v1_to_v2 fn below) once
+                // the new storage layout is defined. Until then the `_ =>`
+                // catchall correctly refuses to bump the version counter.
                 2 => {
                     if !dry_run {
                         Self::migrate_v2_to_v3(env);
@@ -210,8 +208,13 @@ impl HuntyCoreMigration {
         }
     }
 
-    /// v1 -> v2: placeholder for future layout changes (no-op for now).
-    fn migrate_v1_to_v2(_env: &Env) {}
+    // v1 -> v2: NOT YET IMPLEMENTED.
+    // Define migrate_v1_to_v2(env: &Env) here and add the corresponding
+    // `1 => { ... current = 2; }` arm to run_migration once the new
+    // storage layout and transformation logic are ready.
+    // Until then this step intentionally does not exist so run_migration
+    // rejects any attempt to target version 2 (or higher) rather than
+    // silently bumping the stored schema counter without touching any data.
 
     /// v2 -> v3: populate required clue IDs list for on-demand clue loading.
     /// Iterates all hunts and saves the list of required clue IDs in separate storage,

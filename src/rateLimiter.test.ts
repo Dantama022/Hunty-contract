@@ -140,4 +140,40 @@ describe('MintRateLimiter', () => {
       await expect(limiter.mint('addr1')).resolves.toBeUndefined();
     });
   });
+
+  describe('memory cleanup', () => {
+    it('removes stale records after window expires', () => {
+      limiter.mint('addr1');
+      limiter.mint('addr2');
+      limiter.mint('addr3');
+      expect(limiter.getMintCount('addr1')).toBe(1);
+      expect(limiter.getMintCount('addr2')).toBe(1);
+      expect(limiter.getMintCount('addr3')).toBe(1);
+      
+      // Advance time past the window
+      vi.advanceTimersByTime(60_001);
+      
+      // Trigger cleanup by minting a new address
+      limiter.mint('addr4');
+      
+      // Old addresses should now return 0 (records were cleaned up)
+      expect(limiter.getMintCount('addr1')).toBe(0);
+      expect(limiter.getMintCount('addr2')).toBe(0);
+      expect(limiter.getMintCount('addr3')).toBe(0);
+      expect(limiter.getMintCount('addr4')).toBe(1);
+    });
+
+    it('cleans up records with some expired timestamps', () => {
+      limiter.mint('addr1');
+      vi.advanceTimersByTime(30_000);
+      limiter.mint('addr1');
+      vi.advanceTimersByTime(31_000);
+      
+      // Trigger cleanup
+      limiter.mint('addr2');
+      
+      // addr1 should have only the recent timestamp
+      expect(limiter.getMintCount('addr1')).toBe(1);
+    });
+  });
 });
