@@ -361,6 +361,8 @@ The working files (`.env`, `.env.testnet`, `.env.staging`, `.env.mainnet`, and a
 
 Required variables are validated when the API starts. Startup fails fast with a clear error if a value is missing, invalid, or still contains a `replace-with-...` placeholder.
 
+The mint rate-limiter API (`src/rateLimiter.ts`) **gates minting with shared Redis state** (`REDIS_URL`). Per-address mint timestamps are stored in Redis so limits survive process restarts and stay correct when multiple API instances run behind a load balancer. An in-memory `Map` is only used inside unit tests.
+
 ```bash
 # Development/testnet
 pnpm dev:testnet
