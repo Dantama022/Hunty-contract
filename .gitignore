@@ -19,3 +19,19 @@ dist/
 !.env.*.example
 
 *.log
+
+# Build artifacts and installers
+*.exe
+
+# Patch rejection and merge conflict files
+*.rej
+*.orig
+
+# Scratch and temporary output files
+scratch/
+scratch_*
+cargo_*.txt
+cargo_*.log
+test_out*.txt
+test_create_out*.txt
+*_diff.txt
