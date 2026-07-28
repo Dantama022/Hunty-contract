@@ -11,6 +11,20 @@ export class MintRateLimiter {
     this.adminSecret = adminSecret;
   }
 
+  private cleanupStaleRecords(): void {
+    const now = Date.now();
+    const cutoff = now - this.config.windowMs;
+    
+    for (const [address, record] of this.records.entries()) {
+      const recentTimestamps = record.timestamps.filter(t => t > cutoff);
+      if (recentTimestamps.length === 0) {
+        this.records.delete(address);
+      } else if (recentTimestamps.length !== record.timestamps.length) {
+        record.timestamps = recentTimestamps;
+      }
+    }
+  }
+
   check(address: string): void {
     const now = Date.now();
     const record = this.records.get(address);
@@ -32,6 +46,9 @@ export class MintRateLimiter {
     const cutoff = now - this.config.windowMs;
     record.timestamps = [...record.timestamps.filter(t => t > cutoff), now];
     this.records.set(address, record);
+    
+    // Opportunistically cleanup stale records to prevent unbounded growth
+    this.cleanupStaleRecords();
   }
 
   mint(address: string): void {
