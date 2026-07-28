@@ -1003,6 +1003,7 @@ mod test {
                     target_amount: 0,
                     min_distribution_interval_secs: 0,
                     distribution_mode: crate::types::DistributionMode::Fixed,
+                    claim_deadline: 0,
                 },
             );
             let _ = RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 10_000_000);

@@ -404,6 +404,7 @@ impl RewardManager {
             target_amount: 0,
             min_distribution_interval_secs: 0,
             distribution_mode: DistributionMode::Fixed,
+            claim_deadline: 0,
         };
         Storage::set_pool_config(&env, hunt_id, &config);
 

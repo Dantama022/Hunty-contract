@@ -56,6 +56,8 @@ pub struct RewardPoolConfig {
     pub min_distribution_interval_secs: u64,
     /// Distribution mode (Fixed or Proportional).
     pub distribution_mode: DistributionMode,
+    /// Unix timestamp after which claims are no longer allowed (0 = disabled).
+    pub claim_deadline: u64,
 }
 
 /// How rewards are calculated from the pool at distribution time.
