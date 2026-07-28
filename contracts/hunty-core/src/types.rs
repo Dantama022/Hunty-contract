@@ -593,6 +593,16 @@ pub struct LeaderboardIndexEntry {
     pub is_completed: bool,
 }
 
+/// Wrapper returned by `get_hunt_leaderboard` that includes truncation
+/// information so callers can tell when the visible entries are incomplete.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeaderboardResult {
+    pub entries: Vec<LeaderboardEntry>,
+    pub total_players: u32,
+    pub truncated: bool,
+}
+
 /// Aggregate statistics for a hunt (read-only query result).
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
