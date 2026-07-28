@@ -79,6 +79,11 @@ app.patch('/admin/config', (req, res) => {
   }
 });
 
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 app.listen(config.port, () => {
   console.log(`Mint rate limiter API running on port ${config.port} (${config.environment})`);
 });
