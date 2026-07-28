@@ -479,7 +479,9 @@ impl Storage {
         let activated_at = Self::get_hunt(env, progress.hunt_id)
             .map(|h| h.activated_at)
             .unwrap_or(0);
-        env.storage().persistent().set(&key, &progress.to_stored(activated_at));
+        env.storage()
+            .persistent()
+            .set(&key, &progress.to_stored(activated_at));
         let policy = if progress.is_completed || progress.reward_claimed {
             TtlPolicy::Short
         } else {
@@ -825,7 +827,9 @@ impl Storage {
     pub fn increment_player_completed_hunt_count(env: &Env, player: &Address) {
         let key = Self::player_completed_count_key(player);
         let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
-        env.storage().persistent().set(&key, &count.saturating_add(1));
+        env.storage()
+            .persistent()
+            .set(&key, &count.saturating_add(1));
         extend_ttl(env, &key, TtlPolicy::Default);
     }
 
@@ -896,10 +900,13 @@ impl Storage {
     /// Returns team progress, defaulting to empty when never written.
     pub fn get_team_progress(env: &Env, hunt_id: u64, team_id: u32) -> TeamProgress {
         let key = Self::team_progress_key(hunt_id, team_id);
-        env.storage().persistent().get(&key).unwrap_or_else(|| TeamProgress {
-            completed_clues: Vec::new(env),
-            total_score: 0,
-        })
+        env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| TeamProgress {
+                completed_clues: Vec::new(env),
+                total_score: 0,
+            })
     }
 
     pub fn get_player_addresses_for_hunt(env: &Env, hunt_id: u64) -> Vec<Address> {
@@ -1467,7 +1474,10 @@ impl Storage {
     // ========== Co-Creators Storage Functions ==========
     pub fn get_co_creators(env: &Env, hunt_id: u64) -> Vec<Address> {
         let key = (symbol_short!("COCRTR"), hunt_id);
-        env.storage().instance().get(&key).unwrap_or_else(|| Vec::new(env))
+        env.storage()
+            .instance()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env))
     }
     pub fn add_co_creator(env: &Env, hunt_id: u64, address: &Address) {
         let key = (symbol_short!("COCRTR"), hunt_id);
