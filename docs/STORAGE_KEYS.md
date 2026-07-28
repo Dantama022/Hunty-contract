@@ -13,7 +13,7 @@ unrecoverable after deploy — update this file in the same PR that adds or chan
 - Composite keys are tuples such as `(Symbol, id)` or `(Symbol, Address, ...)`.
 
 A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
-`const *_KEY` declared under `contracts/` is named in this document.
+`const *_KEY` declared under `contracts/` is named in this document (`docs/STORAGE_KEYS.md`).
 
 ---
 
@@ -258,5 +258,5 @@ When adding a new `*_KEY` constant:
 
 1. Choose a prefix unique within the contract module.
 2. Declare the constant next to the other keys in `storage.rs`.
-3. Document it in this file in the same PR.
+3. Document it in this file (`docs/STORAGE_KEYS.md`) in the same PR.
 4. Run `scripts/ci/check_storage_keys_doc.sh`.

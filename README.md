@@ -3,6 +3,9 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![Soroban](https://img.shields.io/badge/soroban-22.0+-purple.svg)](https://soroban.stellar.org/)
+[![CI](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/ci.yml/badge.svg)](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/ci.yml)
+[![WASM Size](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/wasm-size.yml/badge.svg)](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/wasm-size.yml)
+[![Coverage](https://img.shields.io/badge/coverage-checked_in_CI-blue)](https://github.com/Samuel1-ona/Hunty-contract/actions/workflows/ci.yml)
 
 Hunty is a decentralized scavenger hunt game built on Stellar/Soroban. Create thrilling scavenger hunts with multiple clues and challenges, engage players in immersive treasure hunts, and reward them with XLM tokens or exclusive NFTs.
 
@@ -357,6 +360,8 @@ The working files (`.env`, `.env.testnet`, `.env.staging`, `.env.mainnet`, and a
 > credentials. Rotate `ADMIN_SECRET` immediately if one is ever pushed.
 
 Required variables are validated when the API starts. Startup fails fast with a clear error if a value is missing, invalid, or still contains a `replace-with-...` placeholder.
+
+The mint rate-limiter API (`src/rateLimiter.ts`) **gates minting with shared Redis state** (`REDIS_URL`). Per-address mint timestamps are stored in Redis so limits survive process restarts and stay correct when multiple API instances run behind a load balancer. An in-memory `Map` is only used inside unit tests.
 
 ```bash
 # Development/testnet

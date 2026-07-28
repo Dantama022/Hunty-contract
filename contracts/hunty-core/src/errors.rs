@@ -51,6 +51,7 @@ pub enum HuntErrorCode {
     InvalidDifficulty = 45,
     CorruptPlayerProgress = 46,
     HuntNotStarted = 47,
+    AdminAlreadyProposed = 48,
 }
 
 #[derive(Debug)]
@@ -104,6 +105,203 @@ pub enum HuntError {
     CorruptPlayerProgress,
     HuntNotStarted,
     AttemptCooldownNotExpired,
+    InvalidDifficulty {
+        value: u32,
+    },
+    CorruptPlayerProgress {
+        hunt_id: u64,
+        player: soroban_sdk::Address,
+    },
+    HuntNotStarted {
+        start_time: u64,
+        current_time: u64,
+    },
+}
+
+impl fmt::Display for HuntError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HuntError::HuntNotFound { hunt_id } => {
+                write!(f, "Hunt not found: ID {}", hunt_id)
+            }
+            HuntError::ClueNotFound { hunt_id } => {
+                write!(f, "Clue not found for hunt {}", hunt_id)
+            }
+            HuntError::InvalidHuntStatus => {
+                write!(f, "Invalid hunt status")
+            }
+            HuntError::PlayerNotRegistered { hunt_id } => {
+                write!(f, "Player not registered for hunt {}", hunt_id)
+            }
+            HuntError::ClueAlreadyCompleted { hunt_id } => {
+                write!(f, "Clue already completed for hunt {}", hunt_id)
+            }
+            HuntError::InvalidAnswer => {
+                write!(f, "Invalid answer submitted")
+            }
+            HuntError::HuntNotActive { hunt_id } => {
+                write!(f, "Hunt not active: ID {}", hunt_id)
+            }
+            HuntError::Unauthorized => {
+                write!(f, "Unauthorized access")
+            }
+            HuntError::InsufficientRewardPool {
+                required,
+                available,
+            } => {
+                write!(
+                    f,
+                    "Insufficient reward pool: required {}, available {}",
+                    required, available
+                )
+            }
+            HuntError::DuplicateRegistration { hunt_id } => {
+                write!(f, "Duplicate registration for hunt {}", hunt_id)
+            }
+            HuntError::InvalidTitle { reason } => {
+                write!(f, "Invalid title: {:?}", reason)
+            }
+            HuntError::InvalidDescription { reason } => {
+                write!(f, "Invalid description: {:?}", reason)
+            }
+            HuntError::InvalidAddress => {
+                write!(f, "Invalid address")
+            }
+            HuntError::TooManyClues { hunt_id, limit } => {
+                write!(f, "Too many clues for hunt {} (limit {})", hunt_id, limit)
+            }
+            HuntError::InvalidQuestion => {
+                write!(f, "Invalid question (empty or exceeds max length)")
+            }
+            HuntError::HuntNotCompleted { hunt_id } => {
+                write!(f, "Hunt {} not completed by player", hunt_id)
+            }
+            HuntError::RewardAlreadyClaimed { hunt_id } => {
+                write!(f, "Reward already claimed for hunt {}", hunt_id)
+            }
+            HuntError::RewardDistributionFailed { hunt_id } => {
+                write!(f, "Reward distribution failed for hunt {}", hunt_id)
+            }
+            HuntError::NoRewardsConfigured { hunt_id } => {
+                write!(f, "No rewards configured for hunt {}", hunt_id)
+            }
+            HuntError::DuplicateSubmission { hunt_id, clue_id } => {
+                write!(
+                    f,
+                    "Duplicate submission detected for hunt {} clue {}",
+                    hunt_id, clue_id
+                )
+            }
+            HuntError::SubmissionExpired {
+                submitted_at,
+                current_time,
+            } => {
+                write!(
+                    f,
+                    "Submission expired or invalid: submitted_at {}, current_time {}",
+                    submitted_at, current_time
+                )
+            }
+            HuntError::BannedPlayer { hunt_id, player } => {
+                write!(f, "Player {:?} is banned from hunt {}", player, hunt_id)
+            }
+            HuntError::NoRequiredClues { hunt_id } => {
+                write!(f, "Hunt {} has no required clues; at least one required clue must exist before activation", hunt_id)
+            }
+            HuntError::RateLimitExceeded { cooldown_remaining } => {
+                write!(
+                    f,
+                    "Rate limit exceeded. Try again in {} seconds",
+                    cooldown_remaining
+                )
+            }
+            HuntError::ScoreOverflow => {
+                write!(f, "Score calculation overflow")
+            }
+            HuntError::RegistrationsPaused => {
+                write!(f, "Registrations are currently paused")
+            }
+            HuntError::AnswersPaused => {
+                write!(f, "Answer submissions are currently paused")
+            }
+            HuntError::RewardsPaused => {
+                write!(f, "Reward claims are currently paused")
+            }
+            HuntError::HuntEndTimeInPast {
+                end_time,
+                current_time,
+            } => {
+                write!(
+                    f,
+                    "Hunt end_time {} is in the past (current time: {})",
+                    end_time, current_time
+                )
+            }
+            HuntError::NoPendingAdmin => {
+                write!(f, "No pending admin rotation to accept")
+            }
+            HuntError::PendingAdminMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Pending admin mismatch: expected {:?}, got {:?}",
+                    expected, actual
+                )
+            }
+            HuntError::AdminAlreadyProposed { pending } => {
+                write!(f, "Admin rotation already proposed for {:?}", pending)
+            }
+            HuntError::AddressBlacklisted => {
+                write!(f, "Address is blacklisted from creating hunts")
+            }
+            HuntError::InvalidRarity { value } => {
+                write!(f, "Invalid rarity value: {}", value)
+            }
+            HuntError::InvalidTimeBonusConfig => {
+                write!(f, "Invalid time bonus configuration")
+            }
+            HuntError::ContractPaused => {
+                write!(f, "Contract is currently paused")
+            }
+            HuntError::InvalidWeight { value } => {
+                write!(f, "Invalid weight value: {} (must be > 0)", value)
+            }
+            HuntError::HintNotAvailable => {
+                write!(f, "Hint not available for clue")
+            }
+            HuntError::HintAlreadyUnlocked => {
+                write!(f, "Hint already unlocked for clue")
+            }
+            HuntError::InsufficientScore => {
+                write!(f, "Insufficient score to unlock hint")
+            }
+            HuntError::TooManyCategories { limit } => {
+                write!(f, "Too many hunt categories (limit {})", limit)
+            }
+            HuntError::InvalidCategory => {
+                write!(f, "Invalid hunt category")
+            }
+            HuntError::InvalidDifficulty { value } => {
+                write!(f, "Invalid difficulty value: {}", value)
+            }
+            HuntError::CorruptPlayerProgress { hunt_id, player } => {
+                write!(
+                    f,
+                    "Corrupt player progress record for hunt {} player {:?}",
+                    hunt_id, player
+                )
+            }
+            HuntError::HuntNotStarted {
+                start_time,
+                current_time,
+            } => {
+                write!(
+                    f,
+                    "Hunt has not started yet (start_time: {}, current_time: {})",
+                    start_time, current_time
+                )
+            }
+        }
+    }
 }
 
 impl From<HuntError> for HuntErrorCode {
@@ -144,6 +342,9 @@ impl From<HuntError> for HuntErrorCode {
             HuntError::PendingAdminMismatch => HuntErrorCode::PendingAdminMismatch,
             HuntError::AdminAlreadyProposed => HuntErrorCode::Unauthorized,
             HuntError::InvalidRarity => HuntErrorCode::InvalidRarity,
+            HuntError::PendingAdminMismatch { .. } => HuntErrorCode::PendingAdminMismatch,
+            HuntError::AdminAlreadyProposed { .. } => HuntErrorCode::AdminAlreadyProposed,
+            HuntError::InvalidRarity { .. } => HuntErrorCode::InvalidRarity,
             HuntError::InvalidTimeBonusConfig => HuntErrorCode::InvalidTimeBonusConfig,
             HuntError::AddressBlacklisted => HuntErrorCode::AddressBlacklisted,
             HuntError::ContractPaused => HuntErrorCode::ContractPaused,

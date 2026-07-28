@@ -479,7 +479,9 @@ impl Storage {
         let activated_at = Self::get_hunt(env, progress.hunt_id)
             .map(|h| h.activated_at)
             .unwrap_or(0);
-        env.storage().persistent().set(&key, &progress.to_stored(activated_at));
+        env.storage()
+            .persistent()
+            .set(&key, &progress.to_stored(activated_at));
         let policy = if progress.is_completed || progress.reward_claimed {
             TtlPolicy::Short
         } else {
@@ -822,7 +824,9 @@ impl Storage {
     pub fn increment_player_completed_hunt_count(env: &Env, player: &Address) {
         let key = Self::player_completed_count_key(player);
         let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
-        env.storage().persistent().set(&key, &count.saturating_add(1));
+        env.storage()
+            .persistent()
+            .set(&key, &count.saturating_add(1));
         extend_ttl(env, &key, TtlPolicy::Default);
     }
 
@@ -893,10 +897,13 @@ impl Storage {
     /// Returns team progress, defaulting to empty when never written.
     pub fn get_team_progress(env: &Env, hunt_id: u64, team_id: u32) -> TeamProgress {
         let key = Self::team_progress_key(hunt_id, team_id);
-        env.storage().persistent().get(&key).unwrap_or_else(|| TeamProgress {
-            completed_clues: Vec::new(env),
-            total_score: 0,
-        })
+        env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| TeamProgress {
+                completed_clues: Vec::new(env),
+                total_score: 0,
+            })
     }
 
     pub fn get_player_addresses_for_hunt(env: &Env, hunt_id: u64) -> Vec<Address> {
@@ -1265,14 +1272,48 @@ impl Storage {
             .unwrap_or(false)
     }
 
-    // ========== Emergency-stop helpers (placeholder) ==========
+    // ========== Emergency-stop helpers ==========
 
-    pub fn get_active_hunt_ids(_env: &Env) -> Vec<u64> {
-        Vec::new(_env)
+    /// Returns the IDs of every hunt whose current status is [`HuntStatus::Active`].
+    ///
+    /// Iterates all hunt IDs from 1 to the current counter value.
+    /// The instance-storage cache is used when available for an O(1) status
+    /// check per hunt; the method falls back to the full persistent record when
+    /// the cache is cold.
+    pub fn get_active_hunt_ids(env: &Env) -> Vec<u64> {
+        let counter = Self::get_hunt_counter(env);
+        let mut active = Vec::new(env);
+        for hunt_id in 1..=counter {
+            // Prefer the cheap instance-cache path.
+            let status = if let Some(cache) = Self::get_hunt_cache(env, hunt_id) {
+                cache.status
+            } else if let Some(hunt) = Self::get_hunt(env, hunt_id) {
+                hunt.status
+            } else {
+                continue;
+            };
+            if status == crate::types::HuntStatus::Active {
+                active.push_back(hunt_id);
+            }
+        }
+        active
     }
 
-    pub fn set_hunt_status(_env: &Env, _hunt_id: u64, _status: crate::types::HuntStatus) {
-        // Placeholder – full implementation would update the hunt's status field in persistent storage.
+    /// Updates the status of an existing hunt and persists the change.
+    ///
+    /// Loads the full [`Hunt`] record, sets `hunt.status` to `status`, then
+    /// delegates back to [`Self::save_hunt`], which handles TTL selection and
+    /// keeps the instance-storage cache coherent with the persistent record.
+    ///
+    /// # Panics
+    /// Does **not** panic if the hunt is missing — the call is silently ignored
+    /// so that a bulk operation (e.g. emergency-stop-all) can continue with
+    /// the remaining hunts.
+    pub fn set_hunt_status(env: &Env, hunt_id: u64, status: crate::types::HuntStatus) {
+        if let Some(mut hunt) = Self::get_hunt(env, hunt_id) {
+            hunt.status = status;
+            Self::save_hunt(env, &hunt);
+        }
     }
 
     /// Adds an address to the global view-only list.
@@ -1430,7 +1471,10 @@ impl Storage {
     // ========== Co-Creators Storage Functions ==========
     pub fn get_co_creators(env: &Env, hunt_id: u64) -> Vec<Address> {
         let key = (symbol_short!("COCRTR"), hunt_id);
-        env.storage().instance().get(&key).unwrap_or_else(|| Vec::new(env))
+        env.storage()
+            .instance()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env))
     }
     pub fn add_co_creator(env: &Env, hunt_id: u64, address: &Address) {
         let key = (symbol_short!("COCRTR"), hunt_id);
