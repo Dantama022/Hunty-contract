@@ -2,6 +2,12 @@
   "name": "hunty-contract",
   "version": "1.0.0",
   "description": "Rate limiter for NFT minting per address",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Samuel1-ona/Hunty-contract.git"
+  },
+  "private": true,
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
