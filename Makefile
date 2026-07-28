@@ -4,6 +4,7 @@ PYTHON ?= python3
 SHA256 ?= sha256sum
 DOCS_OUTPUT := docs/contract-api.md
 
+.PHONY: build bindings all clean generate-api-docs check check-wasm-abi setup-githooks
 .PHONY: build bindings all clean generate-api-docs check setup-githooks benchmark-compare
 # macOS compatibility: check for shasum (pre-installed on macOS) and fall back to sha256sum.
 ifeq ($(shell uname -s),Darwin)
@@ -55,10 +56,14 @@ bindings: build
 		--overwrite
 	$(call stamp-binding,nft_reward.wasm,nft-reward)
 
+check-wasm-abi:
+	$(PYTHON) scripts/check_wasm_abi.py
+
 check:
 	cargo fmt --all -- --check
 	cargo clippy --workspace -- -D warnings
 	cargo test --workspace --locked
+	$(MAKE) check-wasm-abi
 
 benchmark-compare:
 	node scripts/ci/compare_gas_benchmarks.mjs
