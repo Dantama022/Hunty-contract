@@ -6,7 +6,7 @@ use crate::types::{
     ClueCompletedEvent, ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt,
     HuntActivatedEvent, HuntArchivedEvent, HuntCancelledEvent, HuntClosedEvent, HuntCompletedEvent,
     HuntCreatedEvent, HuntDeactivatedEvent, HuntDescriptionUpdatedEvent, HuntReactivatedEvent,
-    HuntStatistics, HuntStatus, HuntStatusChangedEvent, LeaderboardEntry, LeaderboardIndexEntry,
+    HuntStatistics, HuntStatus, HuntStatusChangedEvent, LeaderboardEntry, LeaderboardIndexEntry, LeaderboardResult,
     PlayerProgress, PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, RewardManagerSetEvent,
     TimeBonusConfig,
 };
@@ -464,10 +464,7 @@ impl HuntyCore {
             return Err(HuntErrorCode::InvalidHuntStatus);
         }
         if Storage::get_clue_counter(&env, hunt_id) >= MAX_CLUES_PER_HUNT {
-            return Err(HuntErrorCode::from(HuntError::TooManyClues {
-                hunt_id,
-                limit: MAX_CLUES_PER_HUNT,
-            }));
+            return Err(HuntErrorCode::from(HuntError::TooManyClues));
         }
 
         let clue_id = Self::insert_clue(
@@ -508,10 +505,7 @@ impl HuntyCore {
 
         let existing = Storage::get_clue_counter(&env, hunt_id);
         if existing.saturating_add(clues.len()) > MAX_CLUES_PER_HUNT {
-            return Err(HuntErrorCode::from(HuntError::TooManyClues {
-                hunt_id,
-                limit: MAX_CLUES_PER_HUNT,
-            }));
+            return Err(HuntErrorCode::from(HuntError::TooManyClues));
         }
 
         let mut clue_ids = Vec::new(&env);
@@ -587,9 +581,7 @@ impl HuntyCore {
 
         let weight_val = weight.unwrap_or(1);
         if weight_val == 0 {
-            return Err(HuntErrorCode::from(HuntError::InvalidWeight {
-                value: weight_val,
-            }));
+            return Err(HuntErrorCode::from(HuntError::InvalidWeight));
         }
 
         let clue_id = Storage::next_clue_id(&env, hunt_id);
@@ -1598,14 +1590,7 @@ impl HuntyCore {
         Ok(())
     }
 
-    /// Sets the admin address. Can only be called once (to initialize).
-    /// Subsequent calls require current admin authorization.
-    pub fn set_admin(env: Env, new_admin: Address) {
-        if let Some(current) = Storage::get_admin(&env) {
-            current.require_auth();
-        }
-        Storage::set_admin(&env, &new_admin);
-    }
+
 
     /// Blacklists a creator address, preventing them from creating new hunts.
     /// Caller must be the admin.
@@ -2467,9 +2452,7 @@ impl HuntyCore {
                 let oldest_ts = progress.recent_submissions.get(0).unwrap();
                 let elapsed = current_time.saturating_sub(oldest_ts);
                 let cooldown_remaining = 60u64.saturating_sub(elapsed);
-                return Err(HuntErrorCode::from(HuntError::RateLimitExceeded {
-                    cooldown_remaining,
-                }));
+                return Err(HuntErrorCode::from(HuntError::RateLimitExceeded));
             }
         }
 
@@ -2477,9 +2460,7 @@ impl HuntyCore {
             if let Some(last_attempt) = progress.clue_last_attempts.get(clue_id) {
                 if current_time < last_attempt + (hunt.attempt_cooldown_secs as u64) {
                     let cooldown_remaining = (last_attempt + (hunt.attempt_cooldown_secs as u64)) - current_time;
-                    return Err(HuntErrorCode::from(HuntError::AttemptCooldownNotExpired {
-                        cooldown_remaining,
-                    }));
+                    return Err(HuntErrorCode::from(HuntError::AttemptCooldownNotExpired));
                 }
             }
             progress.clue_last_attempts.set(clue_id, current_time);
@@ -2588,9 +2569,7 @@ impl HuntyCore {
                 let oldest_ts = progress.recent_submissions.get(0).unwrap();
                 let elapsed = current_time.saturating_sub(oldest_ts);
                 let cooldown_remaining = 60u64.saturating_sub(elapsed);
-                return Err(HuntErrorCode::from(HuntError::RateLimitExceeded {
-                    cooldown_remaining,
-                }));
+                return Err(HuntErrorCode::from(HuntError::RateLimitExceeded));
             }
         }
 
@@ -2628,16 +2607,10 @@ impl HuntyCore {
         submitted_at: u64,
     ) -> Result<(), HuntError> {
         if submitted_at > current_time.saturating_add(ANSWER_SUBMISSION_FUTURE_SKEW_SECS) {
-            return Err(HuntError::SubmissionExpired {
-                submitted_at,
-                current_time,
-            });
+            return Err(HuntError::SubmissionExpired);
         }
         if current_time.saturating_sub(submitted_at) > ANSWER_SUBMISSION_WINDOW_SECS {
-            return Err(HuntError::SubmissionExpired {
-                submitted_at,
-                current_time,
-            });
+            return Err(HuntError::SubmissionExpired);
         }
         Ok(())
     }
@@ -2660,7 +2633,7 @@ impl HuntyCore {
             submitted_at,
         ) {
             if current_time <= expires_at {
-                return Err(HuntError::DuplicateSubmission { hunt_id, clue_id });
+                return Err(HuntError::DuplicateSubmission);
             }
 
             Storage::remove_processed_submission(
@@ -2764,9 +2737,10 @@ impl HuntyCore {
         env: Env,
         hunt_id: u64,
         limit: u32,
-    ) -> Result<Vec<LeaderboardEntry>, HuntErrorCode> {
+    ) -> Result<LeaderboardResult, HuntErrorCode> {
         // Cache existence check (cheaper than loading full Hunt)
         Storage::get_hunt_cache(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+        let total_players = Storage::get_hunt_players(&env, hunt_id).len();
         let effective_limit = core::cmp::min(limit, MAX_LEADERBOARD_SIZE);
         let entries = Storage::get_leaderboard_index(&env, hunt_id);
         let mut result = Vec::new(&env);
@@ -2782,7 +2756,12 @@ impl HuntyCore {
             });
         }
 
-        Ok(result)
+        let truncated = entries.len() < total_players;
+        Ok(LeaderboardResult {
+            entries: result,
+            total_players,
+            truncated,
+        })
     }
 
     /// Scans a bounded window of registered players for a hunt and returns
@@ -3294,7 +3273,7 @@ impl HuntyCore {
     }
 }
 
-mod admin;
+
 mod errors;
 mod migration;
 mod monitoring;
