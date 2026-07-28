@@ -7619,6 +7619,70 @@ mod test {
         });
     }
 
+    // ========== Admin Security Tests ==========
+
+    #[test]
+    fn test_admin_initialization_flow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let contract_id = env.register_contract(None, HuntyCore);
+
+        // First initialization succeeds
+        as_core_contract(&env, &contract_id, |env| {
+            assert!(HuntyCore::initialize_admin(env.clone(), admin1.clone()).is_ok());
+        });
+
+        // Second initialization fails
+        as_core_contract(&env, &contract_id, |env| {
+            let res = HuntyCore::initialize_admin(env.clone(), admin2.clone());
+            assert_eq!(res, Err(HuntErrorCode::Unauthorized));
+        });
+    }
+
+    #[test]
+    fn test_admin_rotation_flow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let admin3 = Address::generate(&env);
+        let contract_id = env.register_contract(None, HuntyCore);
+
+        as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::initialize_admin(env.clone(), admin1.clone()).unwrap();
+        });
+
+        // Unauthorized user cannot propose
+        as_core_contract(&env, &contract_id, |env| {
+            let res = HuntyCore::propose_new_admin(env.clone(), admin2.clone(), admin3.clone());
+            assert_eq!(res, Err(HuntErrorCode::Unauthorized));
+        });
+
+        // Admin1 proposes Admin2
+        as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::propose_new_admin(env.clone(), admin1.clone(), admin2.clone()).unwrap();
+        });
+
+        // Admin3 cannot accept
+        as_core_contract(&env, &contract_id, |env| {
+            let res = HuntyCore::accept_admin(env.clone(), admin3.clone());
+            assert_eq!(res, Err(HuntErrorCode::PendingAdminMismatch));
+        });
+
+        // Admin2 accepts
+        as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::accept_admin(env.clone(), admin2.clone()).unwrap();
+        });
+
+        // Admin1 can no longer propose
+        as_core_contract(&env, &contract_id, |env| {
+            let res = HuntyCore::propose_new_admin(env.clone(), admin1.clone(), admin3.clone());
+            assert_eq!(res, Err(HuntErrorCode::Unauthorized));
+        });
+    }
+
     // ========== Blacklist Tests ==========
 
     #[test]
@@ -7630,7 +7694,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), admin.clone(), creator.clone()).unwrap();
@@ -7650,7 +7714,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), admin.clone(), creator.clone()).unwrap();
@@ -7673,7 +7737,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), admin.clone(), creator.clone()).unwrap();
@@ -7701,7 +7765,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), admin.clone(), creator.clone()).unwrap();
@@ -7729,7 +7793,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         let result = as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), not_admin.clone(), creator.clone())
