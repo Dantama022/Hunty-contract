@@ -1598,14 +1598,7 @@ impl HuntyCore {
         Ok(())
     }
 
-    /// Sets the admin address. Can only be called once (to initialize).
-    /// Subsequent calls require current admin authorization.
-    pub fn set_admin(env: Env, new_admin: Address) {
-        if let Some(current) = Storage::get_admin(&env) {
-            current.require_auth();
-        }
-        Storage::set_admin(&env, &new_admin);
-    }
+
 
     /// Blacklists a creator address, preventing them from creating new hunts.
     /// Caller must be the admin.
@@ -3294,7 +3287,7 @@ impl HuntyCore {
     }
 }
 
-mod admin;
+
 mod errors;
 mod migration;
 mod monitoring;
