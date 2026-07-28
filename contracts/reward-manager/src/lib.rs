@@ -215,6 +215,15 @@ pub struct PoolAuditLogResponse {
 
 #[contractimpl]
 impl RewardManager {
+    fn is_delegate(config: &RewardPoolConfig, candidate: &Address) -> bool {
+        for i in 0..config.delegates.len() {
+            if config.delegates.get(i).unwrap() == *candidate {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Current semantic version of this contract.
     pub const CONTRACT_VERSION: u32 = 2;
     /// Minimum NftReward version this contract requires.
@@ -430,6 +439,7 @@ impl RewardManager {
 
         let config = RewardPoolConfig {
             creator: creator.clone(),
+            delegates: Vec::new(&env),
             min_distribution_amount,
             time_based_tiers: Vec::new(&env),
             frozen: false,
@@ -438,6 +448,7 @@ impl RewardManager {
             target_amount: 0,
             min_distribution_interval_secs: 0,
             distribution_mode: DistributionMode::Fixed,
+            claim_deadline: 0,
         };
         Storage::set_pool_config(&env, hunt_id, &config);
 
@@ -687,6 +698,61 @@ impl RewardManager {
         }
 
         config.nft_contract = nft_contract;
+        Storage::set_pool_config(&env, hunt_id, &config);
+
+        Ok(())
+    }
+
+    /// Adds a delegate allowed to distribute rewards for a pool.
+    /// Only the pool creator can manage delegates.
+    pub fn add_delegate(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        delegate: Address,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        if !Self::is_delegate(&config, &delegate) {
+            config.delegates.push_back(delegate);
+            Storage::set_pool_config(&env, hunt_id, &config);
+        }
+
+        Ok(())
+    }
+
+    /// Removes a delegate from a pool.
+    /// Only the pool creator can manage delegates.
+    pub fn remove_delegate(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        delegate: Address,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        let mut updated: Vec<Address> = Vec::new(&env);
+        for i in 0..config.delegates.len() {
+            let existing = config.delegates.get(i).unwrap();
+            if existing != delegate {
+                updated.push_back(existing);
+            }
+        }
+        config.delegates = updated;
         Storage::set_pool_config(&env, hunt_id, &config);
 
         Ok(())
@@ -1216,13 +1282,8 @@ impl RewardManager {
         player_address: Address,
         reward_config: RewardConfig,
     ) -> Result<(), RewardErrorCode> {
-        // NOTE: soroban-sdk 22 does not expose an immediate-caller API, so the
-        // authorized-contract allowlist (configured via add_authorized_contract)
-        // cannot be enforced from inside this function without extending the
-        // signature to take (and require_auth) the calling contract's address.
-        // The allowlist is retained in storage for a follow-up that threads the
-        // caller through; until then no caller-based rejection is performed here.
-        let _ = Storage::has_authorized_contracts(&env);
+        let pool_config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
 
         // Validate configuration
         if !reward_config.is_valid() {
@@ -1230,10 +1291,8 @@ impl RewardManager {
         }
 
         // Reject distribution if the pool is frozen
-        if let Some(pool_config) = Storage::get_pool_config(&env, hunt_id) {
-            if pool_config.frozen {
-                return Err(RewardErrorCode::PoolFrozen);
-            }
+        if pool_config.frozen {
+            return Err(RewardErrorCode::PoolFrozen);
         }
 
         // Prevent double distribution using monotonic nonce
@@ -1255,23 +1314,21 @@ impl RewardManager {
         let _reentrancy_guard = ReentrancyGuard::acquire(&env)?;
 
         // Per-pool distribution rate limiting
-        if let Some(pool_config) = Storage::get_pool_config(&env, hunt_id) {
-            let interval = pool_config.min_distribution_interval_secs;
-            if interval > 0 {
-                let now = env.ledger().timestamp();
-                if let Some(last) = Storage::get_last_distribution_timestamp(&env, hunt_id) {
-                    let elapsed = now.saturating_sub(last);
-                    if elapsed < interval {
-                        let remaining_secs = interval - elapsed;
-                        env.events().publish(
-                            (symbol_short!("DIST_CD"), hunt_id),
-                            DistributionCooldownEvent {
-                                hunt_id,
-                                remaining_secs,
-                            },
-                        );
-                        return Err(RewardErrorCode::DistributionRateLimited);
-                    }
+        let interval = pool_config.min_distribution_interval_secs;
+        if interval > 0 {
+            let now = env.ledger().timestamp();
+            if let Some(last) = Storage::get_last_distribution_timestamp(&env, hunt_id) {
+                let elapsed = now.saturating_sub(last);
+                if elapsed < interval {
+                    let remaining_secs = interval - elapsed;
+                    env.events().publish(
+                        (symbol_short!("DIST_CD"), hunt_id),
+                        DistributionCooldownEvent {
+                            hunt_id,
+                            remaining_secs,
+                        },
+                    );
+                    return Err(RewardErrorCode::DistributionRateLimited);
                 }
             }
         }
@@ -1522,14 +1579,6 @@ impl RewardManager {
         // Gas limit: reject excessive batch sizes
         if batch_len > MAX_BATCH_SIZE as usize {
             return Err(RewardErrorCode::BatchTooLarge);
-        }
-
-        // Validate caller is an authorized contract (when configured)
-        if Storage::has_authorized_contracts(&env) {
-            let caller = env.caller();
-            if !Storage::is_authorized_contract(&env, &caller) {
-                return Err(RewardErrorCode::Unauthorized);
-            }
         }
 
         // ── Phase 1: Validate all entries (read-only, no state changes) ──
