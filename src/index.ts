@@ -1,11 +1,20 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { MintRateLimiter } from './rateLimiter';
 import { MintRateLimitError } from './errors';
 import { loadConfig, publicConfig } from './config';
 import { createMintStore } from './mintStore';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10kb' }));
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/mint', globalLimiter);
 
 const config = loadConfig();
 
@@ -45,8 +54,8 @@ app.get('/environment', (_req, res) => {
 
 app.post('/mint', async (req, res) => {
   const { address } = req.body;
-  if (!address || typeof address !== 'string') {
-    res.status(400).json({ error: 'address is required' });
+  if (!address || typeof address !== 'string' || !/^G[A-Z2-7]{55}$/.test(address)) {
+    res.status(400).json({ error: 'invalid address' });
     return;
   }
   try {
