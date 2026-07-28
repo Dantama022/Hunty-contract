@@ -3672,6 +3672,40 @@ pub fn is_reward_distributed(env: Env, hunt_id: u64, player: Address) -> bool
 
 ---
 
+#### `get_distribution_analytics`
+
+Returns distribution analytics (average, median, min, max) across a reward pool.
+
+Supports optional time-range filtering. The computation is gas-bounded: at most 500 distributions are processed.
+
+**Signature:**
+
+```rust
+pub fn get_distribution_analytics(env: Env, hunt_id: u64, start_time: Option<u64>, end_time: Option<u64>) -> DistributionAnalytics
+```
+
+**Parameters:**
+
+- `env: Env`
+- `hunt_id: u64` - The hunt whose pool analytics to query
+- `start_time: Option<u64>` - Optional lower bound (inclusive) ledger timestamp filter
+- `end_time: Option<u64>` - Optional upper bound (exclusive) ledger timestamp filter
+
+**Returns:** `DistributionAnalytics`
+
+```rust
+pub struct DistributionAnalytics {
+    pub count: u64,   // Number of distributions in the window
+    pub total: i128,  // Total XLM distributed (stroops)
+    pub average: i128, // Mean XLM amount per distribution
+    pub median: i128,  // Median XLM amount
+    pub min: i128,     // Minimum XLM amount
+    pub max: i128,     // Maximum XLM amount
+}
+```
+
+---
+
 #### `admin_withdraw_unclaimed`
 
 Allows the admin to withdraw any unclaimed (surplus) XLM remaining in a reward pool.

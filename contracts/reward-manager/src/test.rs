@@ -3,7 +3,7 @@ mod test {
     use crate::errors::RewardErrorCode;
     use crate::storage::Storage;
     use crate::types::RewardConfig;
-    use crate::{RewardManager, RewardsDistributedEvent};
+    use crate::{DistributionAnalytics, RewardManager, RewardsDistributedEvent};
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::testutils::Events as _;
     use soroban_sdk::{symbol_short, token, Address, Env, IntoVal, Symbol, TryFromVal, Val, Vec};
@@ -2719,6 +2719,256 @@ mod test {
 
             let result = RewardManager::migrate_pool(env.clone(), creator.clone(), 1, 2);
             assert_eq!(result, Err(RewardErrorCode::InvalidMigration));
+        });
+    }
+
+    // ========== get_distribution_analytics ==========
+
+    #[test]
+    fn test_get_distribution_analytics_empty_pool() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, _token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+
+            let analytics = RewardManager::get_distribution_analytics(
+                env.clone(),
+                1,
+                None,
+                None,
+            );
+            assert_eq!(analytics.count, 0);
+            assert_eq!(analytics.total, 0);
+            assert_eq!(analytics.average, 0);
+            assert_eq!(analytics.median, 0);
+            assert_eq!(analytics.min, 0);
+            assert_eq!(analytics.max, 0);
+        });
+    }
+
+    #[test]
+    fn test_get_distribution_analytics_single_distribution() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 100_000_000).unwrap();
+
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player.clone(),
+                xlm_only_config(&env, 50_000_000),
+            )
+            .unwrap();
+
+            let analytics = RewardManager::get_distribution_analytics(
+                env.clone(),
+                1,
+                None,
+                None,
+            );
+            assert_eq!(analytics.count, 1);
+            assert_eq!(analytics.total, 50_000_000);
+            assert_eq!(analytics.average, 50_000_000);
+            assert_eq!(analytics.median, 50_000_000);
+            assert_eq!(analytics.min, 50_000_000);
+            assert_eq!(analytics.max, 50_000_000);
+        });
+    }
+
+    #[test]
+    fn test_get_distribution_analytics_multiple_distributions() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+        let player3 = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 200_000_000).unwrap();
+
+            // Distribute 10M, 20M, 30M — median should be 20M
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player1.clone(),
+                xlm_only_config(&env, 10_000_000),
+            )
+            .unwrap();
+
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player2.clone(),
+                xlm_only_config(&env, 30_000_000),
+            )
+            .unwrap();
+
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player3.clone(),
+                xlm_only_config(&env, 20_000_000),
+            )
+            .unwrap();
+
+            let analytics = RewardManager::get_distribution_analytics(
+                env.clone(),
+                1,
+                None,
+                None,
+            );
+            // Values: 10M, 20M, 30M
+            assert_eq!(analytics.count, 3);
+            assert_eq!(analytics.total, 60_000_000);
+            assert_eq!(analytics.average, 20_000_000);  // 60M / 3
+            assert_eq!(analytics.median, 20_000_000);   // middle of sorted [10M, 20M, 30M]
+            assert_eq!(analytics.min, 10_000_000);
+            assert_eq!(analytics.max, 30_000_000);
+        });
+    }
+
+    #[test]
+    fn test_get_distribution_analytics_even_count_median() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let players: Vec<Address> = (0..4)
+            .map(|_| Address::generate(&env))
+            .collect();
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 200_000_000).unwrap();
+
+            let amounts = [5_000_000i128, 20_000_000, 10_000_000, 15_000_000];
+            let mut idx: u32 = 0;
+            while idx < 4 {
+                RewardManager::distribute_rewards(
+                    env.clone(), 1, players.get(idx).unwrap().clone(),
+                    xlm_only_config(&env, amounts[idx as usize]),
+                ).unwrap();
+                idx += 1;
+            }
+
+            let analytics = RewardManager::get_distribution_analytics(
+                env.clone(), 1, None, None,
+            );
+            assert_eq!(analytics.count, 4);
+            assert_eq!(analytics.total, 50_000_000);
+            assert_eq!(analytics.average, 12_500_000);
+            assert_eq!(analytics.median, 12_500_000);
+            assert_eq!(analytics.min, 5_000_000);
+            assert_eq!(analytics.max, 20_000_000);
+        });
+    }
+
+    #[test]
+    fn test_get_distribution_analytics_time_range_filter() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player = Address::generate(&env);
+
+        env.ledger().set_timestamp(1_000_000);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 200_000_000).unwrap();
+
+            RewardManager::distribute_rewards(
+                env.clone(), 1, player.clone(), xlm_only_config(&env, 10_000_000),
+            ).unwrap();
+
+            env.ledger().set_timestamp(2_000_000);
+
+            RewardManager::distribute_rewards(
+                env.clone(), 1, player.clone(), xlm_only_config(&env, 20_000_000),
+            ).unwrap();
+
+            env.ledger().set_timestamp(3_000_000);
+
+            RewardManager::distribute_rewards(
+                env.clone(), 1, player.clone(), xlm_only_config(&env, 30_000_000),
+            ).unwrap();
+
+            let analytics = RewardManager::get_distribution_analytics(
+                env.clone(), 1, Some(2_000_000), None,
+            );
+            assert_eq!(analytics.count, 2);
+            assert_eq!(analytics.total, 50_000_000);
+            assert_eq!(analytics.min, 20_000_000);
+            assert_eq!(analytics.max, 30_000_000);
+
+            let analytics = RewardManager::get_distribution_analytics(
+                env.clone(), 1, None, Some(3_000_000),
+            );
+            assert_eq!(analytics.count, 2);
+            assert_eq!(analytics.total, 30_000_000);
+
+            let analytics = RewardManager::get_distribution_analytics(
+                env.clone(), 1, Some(1_500_000), Some(2_500_000),
+            );
+            assert_eq!(analytics.count, 1);
+            assert_eq!(analytics.total, 20_000_000);
+        });
+    }
+
+    #[test]
+    fn test_get_distribution_analytics_gas_bound() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 1_000_000_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 1_000_000_000_000).unwrap();
+
+            let total_dists: u32 = 501;
+            let mut i: u32 = 0;
+            while i < total_dists {
+                let player = Address::generate(&env);
+                RewardManager::distribute_rewards(
+                    env.clone(), 1, player, xlm_only_config(&env, 1_000_000),
+                ).unwrap();
+                i += 1;
+            }
+
+            let analytics = RewardManager::get_distribution_analytics(
+                env.clone(), 1, None, None,
+            );
+            assert_eq!(analytics.count, 500);
+            assert_eq!(analytics.total, 500_000_000_000i128);
         });
     }
 }

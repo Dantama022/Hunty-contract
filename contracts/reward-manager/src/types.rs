@@ -233,3 +233,22 @@ pub struct PoolDistribution {
     pub nft_id: Option<u64>,
     pub timestamp: u64,
 }
+
+/// Statistical summary of distributions across a reward pool,
+/// returned by get_distribution_analytics().
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DistributionAnalytics {
+    /// Number of distributions included in the analytics window.
+    pub count: u64,
+    /// Total XLM distributed in the analytics window (stroops).
+    pub total: i128,
+    /// Average (mean) XLM amount per distribution (stroops). 0 if count is 0.
+    pub average: i128,
+    /// Median XLM amount across distributions (stroops). 0 if count is 0.
+    pub median: i128,
+    /// Minimum XLM amount in a single distribution (stroops). 0 if count is 0.
+    pub min: i128,
+    /// Maximum XLM amount in a single distribution (stroops). 0 if count is 0.
+    pub max: i128,
+}
