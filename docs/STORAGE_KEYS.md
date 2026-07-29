@@ -120,6 +120,7 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | Constant | Symbol | Shape / notes |
 |---|---|---|
 | `ADMIN_KEY` | `ADMI` | admin address |
+| `PENDING_ADMIN_KEY` | `PADMI` | pending admin transfer |
 | `XLM_TOKEN_KEY` | `X` | native/XLM SAC address |
 | `NFT_CONTRACT_KEY` | `NFTA` | nft-reward contract address |
 | `HUNTY_CORE_KEY` | `HCORE` | hunty-core contract address |
@@ -148,6 +149,7 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | `PAUSED_KEY` | `PAUSE` | emergency pause — also seen as `PAUSED` / `PAUS` |
 | `EMERGENCY_LOG_KEY` | `EMLOG` | emergency action log — also seen as `ELOG` |
 | `PENDING_NFT_KEY` | `PNFT` | `(PNFT, hunt_id, player)` pending mint |
+| `VESTING_KEY` | `VEST` | `(VEST, hunt_id, player)` vesting record |
 
 ### Inline / helper symbols (reward-manager)
 

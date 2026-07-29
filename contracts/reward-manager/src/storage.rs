@@ -43,7 +43,8 @@ impl Storage {
     const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("AUDL");
     const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
     const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
-    const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
+    
+    pub const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
 
     // ========== Vesting ==========
     const VESTING_KEY: soroban_sdk::Symbol = symbol_short!("VEST");
@@ -593,7 +594,7 @@ impl Storage {
         env.storage().persistent().remove(&key);
     }
 
-    fn pending_nft_key(hunt_id: u64, player: &Address) -> (soroban_sdk::Symbol, u64, Address) {
+    pub fn pending_nft_key(hunt_id: u64, player: &Address) -> (soroban_sdk::Symbol, u64, Address) {
         (Self::PENDING_NFT_KEY, hunt_id, player.clone())
     }
 
