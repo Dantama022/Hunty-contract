@@ -121,6 +121,7 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | Constant | Symbol | Shape / notes |
 |---|---|---|
 | `ADMIN_KEY` | `ADMI` | admin address |
+| `PENDING_ADMIN_KEY` | `PADMI` | pending admin transfer |
 | `XLM_TOKEN_KEY` | `X` | native/XLM SAC address |
 | `NFT_CONTRACT_KEY` | `NFTA` | nft-reward contract address |
 | `HUNTY_CORE_KEY` | `HCORE` | hunty-core contract address |
