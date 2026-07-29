@@ -25,13 +25,6 @@ impl Storage {
     const ALL_NFTS_KEY: soroban_sdk::Symbol = symbol_short!("ALLNFT");
     const NFT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("NFTV");
     const CONTRACT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("CTRV");
-    // Keys referenced by storage helpers (must stay unique within this module)
-    const NFT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("NV");
-    const HUNT_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("HN");
-    const ALL_NFTS_KEY: soroban_sdk::Symbol = symbol_short!("AN");
-    const TOTAL_HUNTS_KEY: soroban_sdk::Symbol = symbol_short!("TH");
-    const TOTAL_OWNERS_KEY: soroban_sdk::Symbol = symbol_short!("TO");
-    const CONTRACT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("CV");
 
     fn nft_key(nft_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::NFT_KEY, nft_id)
@@ -95,11 +88,6 @@ impl Storage {
     pub fn is_initialized(env: &Env) -> bool {
         env.storage().instance().has(&Self::INITIALIZED_KEY)
             || env.storage().persistent().has(&Self::INITIALIZED_KEY)
-    }
-
-    pub fn remove_nft(env: &Env, nft_id: u64) {
-        let key = Self::nft_key(nft_id);
-        env.storage().persistent().remove(&key);
     }
 
     pub fn save_admin(env: &Env, admin: &Address) {
@@ -376,20 +364,6 @@ impl Storage {
         }
     }
 
-    pub fn get_max_supply(env: &Env) -> Option<u64> {
-        env.storage()
-            .persistent()
-            .get::<_, Option<u64>>(&Self::MAX_SUPPLY_KEY)
-            .flatten()
-    }
-
-    pub fn is_initialized(env: &Env) -> bool {
-        env.storage()
-            .persistent()
-            .get(&Self::INITIALIZED_KEY)
-            .unwrap_or(false)
-    }
-
     pub fn add_nft_to_owner(env: &Env, owner: &Address, nft_id: u64) {
         let count_key = Self::owner_nft_count_key(owner);
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
@@ -414,41 +388,6 @@ impl Storage {
             env.storage()
                 .persistent()
                 .set(&Self::TOTAL_OWNERS_KEY, &(current_total + 1));
-        }
-    }
-
-    pub fn remove_nft_from_owner(env: &Env, owner: &Address, nft_id: u64) {
-        let count_key = Self::owner_nft_count_key(owner);
-        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-        let exist_key = Self::owner_nft_exist_key(owner, nft_id);
-        if !env.storage().persistent().has(&exist_key) {
-            return;
-        }
-
-        let mut found = false;
-        for i in 0..count {
-            let entry_key = Self::owner_nft_entry_key(owner, i);
-            if let Some(stored_id) = env.storage().persistent().get::<_, u64>(&entry_key) {
-                if stored_id == nft_id {
-                    let last_idx = count - 1;
-                    if i != last_idx {
-                        let last_key = Self::owner_nft_entry_key(owner, last_idx);
-                        if let Some(last_id) = env.storage().persistent().get::<_, u64>(&last_key) {
-                            env.storage().persistent().set(&entry_key, &last_id);
-                        }
-                        env.storage().persistent().remove(&last_key);
-                    } else {
-                        env.storage().persistent().remove(&entry_key);
-                    }
-                    found = true;
-                    break;
-                }
-            }
-        }
-
-        if found {
-            env.storage().persistent().set(&count_key, &(count - 1));
-            env.storage().persistent().remove(&exist_key);
         }
     }
 

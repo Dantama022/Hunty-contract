@@ -10,16 +10,11 @@ use crate::nft_handler::NftHandler;
 use crate::storage::Storage;
 use crate::token_handler::TokenHandler;
 pub use crate::types::{
-    resolve_tier_amount, tiers_are_strictly_ascending, BatchDistributionEntry, DistributionMode,
-    DistributionProof, DistributionRecord, DistributionStatus, PendingNftMint, PoolAuditEntry,
-    PoolDistribution, PoolOperation, ResolutionStatus, RewardConfig, RewardPoolConfig,
-    RewardPoolStatistics, RewardPoolStatus, SemVer, TierError, TimeBasedRewardTier,
-    ValidationResult, VestingRecord, VestingStatus,
     resolve_tier_amount, tiers_are_strictly_ascending, BatchDistributionEntry,
     DistributionAnalytics, DistributionMode, DistributionProof, DistributionRecord,
     DistributionStatus, PendingNftMint, PoolAuditEntry, PoolDistribution, PoolOperation,
     ResolutionStatus, RewardConfig, RewardPoolConfig, RewardPoolStatistics, RewardPoolStatus,
-    SemVer, TierError, TimeBasedRewardTier, ValidationResult,
+    SemVer, TierError, TimeBasedRewardTier, ValidationResult, VestingRecord, VestingStatus,
 };
 use crate::xlm_handler::XlmHandler;
 
@@ -1649,7 +1644,7 @@ impl RewardManager {
         }
 
         // Gas limit: reject excessive batch sizes
-        if batch_len > MAX_BATCH_SIZE as usize {
+        if batch_len > MAX_BATCH_SIZE {
             return Err(RewardErrorCode::BatchTooLarge);
         }
 
@@ -2401,7 +2396,7 @@ impl RewardManager {
     ///
     /// # Returns
     /// The total number of distributions for the pool.
-    pub fn get_pool_distribution_count(env: Env, hunt_id: u64) -> u32 {
+    pub fn get_pool_distribution_count(env: Env, hunt_id: u64) -> u64 {
         Storage::get_pool_distribution_count(&env, hunt_id)
     }
 
@@ -2451,7 +2446,7 @@ impl RewardManager {
         // get the most relevant entries.
         let mut amounts: soroban_sdk::Vec<i128> = Vec::new(&env);
         let mut idx = total as i64 - 1;
-        let cap = MAX_ANALYTICS_ENTRIES as u64;
+        let cap = MAX_ANALYTICS_ENTRIES;
 
         while idx >= 0 && amounts.len() < cap {
             if let Some(dist) = all.get(idx as u32) {
