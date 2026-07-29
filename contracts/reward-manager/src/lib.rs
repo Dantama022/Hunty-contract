@@ -307,9 +307,14 @@ impl RewardManager {
         Storage::set_admin(&env, &new_admin);
         Storage::clear_pending_admin(&env);
 
+        let old_admin_str = old_admin
+            .as_ref()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| soroban_sdk::String::from_str(&env, "NONE"));
+
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "ADMIN"), soroban_sdk::Symbol::new(&env, "ADM_TRF")),
-            (old_admin, new_admin),
+            (old_admin_str, new_admin.to_string()),
         );
 
         Ok(())
