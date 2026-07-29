@@ -11,7 +11,11 @@ app.use(express.json({ limit: '10kb' }));
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+
 });
+
 app.use('/mint', globalLimiter);
 
 const config = loadConfig();
@@ -31,6 +35,7 @@ async function bootstrap(): Promise<void> {
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', ...publicConfig(config) });
+  
 });
 
 app.get('/environment', (_req, res) => {

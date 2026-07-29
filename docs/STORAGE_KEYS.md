@@ -5,6 +5,7 @@ Every `*_KEY` constant and composite key constructor in `contracts/*/src/storage
 (and related monitoring modules) must appear here. Storage key collisions are
 unrecoverable after deploy — update this file in the same PR that adds or changes a key.
 
+
 ## Convention
 
 - Prefer `symbol_short!("...")` prefixes (≤ 9 chars).
@@ -148,6 +149,7 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | `PAUSED_KEY` | `PAUSE` | emergency pause — also seen as `PAUSED` / `PAUS` |
 | `EMERGENCY_LOG_KEY` | `EMLOG` | emergency action log — also seen as `ELOG` |
 | `PENDING_NFT_KEY` | `PNFT` | `(PNFT, hunt_id, player)` pending mint |
+| `VESTING_KEY` | `VEST` | `(VEST, hunt_id, player)` vesting record |
 
 ### Inline / helper symbols (reward-manager)
 

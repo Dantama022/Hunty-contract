@@ -20,6 +20,10 @@ dist/
 
 *.log
 
+# Captured test output and diff files
+test_out.txt
+test_create_out.txt
+*_test_diff.txt
 # Build artifacts and installers
 *.exe
 
