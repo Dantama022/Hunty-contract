@@ -149,6 +149,7 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | `PAUSED_KEY` | `PAUSE` | emergency pause — also seen as `PAUSED` / `PAUS` |
 | `EMERGENCY_LOG_KEY` | `EMLOG` | emergency action log — also seen as `ELOG` |
 | `PENDING_NFT_KEY` | `PNFT` | `(PNFT, hunt_id, player)` pending mint |
+| `VESTING_KEY` | `VEST` | `(VEST, hunt_id, player)` — vesting record |
 | `VESTING_KEY` | `VEST` | `(VEST, hunt_id, player)` vesting record |
 
 ### Inline / helper symbols (reward-manager)
