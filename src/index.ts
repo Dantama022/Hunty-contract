@@ -11,8 +11,6 @@ app.use(express.json({ limit: '10kb' }));
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
 });
 app.use('/mint', globalLimiter);
 
@@ -101,23 +99,17 @@ app.patch('/admin/config', (req, res) => {
   }
 });
 
-void bootstrap().catch((err) => {
-  console.error('Failed to start mint rate limiter API:', err);
-  process.exit(1);
-});
-
-export { app, config };
-export function getLimiter(): MintRateLimiter {
-  return limiter;
-}
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(config.port, () => {
-  console.log(`Mint rate limiter API running on port ${config.port} (${config.environment})`);
+void bootstrap().catch((err) => {
+  console.error('Failed to start mint rate limiter API:', err);
+  process.exit(1);
 });
 
-
-export { app, limiter, config };
+export { app, config, limiter };
+export function getLimiter(): MintRateLimiter {
+  return limiter;
+}
