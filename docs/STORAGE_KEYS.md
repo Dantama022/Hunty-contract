@@ -5,6 +5,7 @@ Every `*_KEY` constant and composite key constructor in `contracts/*/src/storage
 (and related monitoring modules) must appear here. Storage key collisions are
 unrecoverable after deploy — update this file in the same PR that adds or changes a key.
 
+
 ## Convention
 
 - Prefer `symbol_short!("...")` prefixes (≤ 9 chars).
