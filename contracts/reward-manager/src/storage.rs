@@ -1,8 +1,8 @@
 use soroban_sdk::{symbol_short, Address, Env, Vec};
 
 use crate::types::{
-    DistributionRecord, PoolAuditEntry, PoolDistribution, ResolutionStatus, RewardPoolConfig,
-    VestingRecord,
+    DistributionProof, DistributionRecord, PoolAuditEntry, PoolDistribution, ResolutionStatus,
+    RewardPoolConfig, VestingRecord,
 };
 
 pub struct Storage;
@@ -199,16 +199,6 @@ impl Storage {
         result
     }
 
-    /// Returns the total count of distributions for a pool.
-    pub fn get_pool_distribution_count(env: &Env, hunt_id: u64) -> u32 {
-        let key = Self::pool_distributions_key(hunt_id);
-        let distributions: Vec<PoolDistribution> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or_else(|| Vec::new(env));
-        distributions.len()
-    }
 
     fn distribution_record_key(
         hunt_id: u64,

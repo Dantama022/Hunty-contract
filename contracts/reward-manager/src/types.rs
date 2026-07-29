@@ -276,6 +276,8 @@ pub struct VestingStatus {
     pub claimable_amount: i128,
     /// True once `claimed_amount >= total_amount`.
     pub fully_vested: bool,
+}
+
 /// Statistical summary of distributions across a reward pool,
 /// returned by get_distribution_analytics().
 #[contracttype]
