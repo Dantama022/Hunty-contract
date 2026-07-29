@@ -180,6 +180,23 @@ mod test {
     }
 
     #[test]
+    fn test_issue_686_error_variants_convert_to_codes() {
+        let cases = [
+            (HuntError::RefundFailed, HuntErrorCode::RefundFailed),
+            (HuntError::NoCluesAdded, HuntErrorCode::NoCluesAdded),
+            (
+                HuntError::InvalidMaxAttempts,
+                HuntErrorCode::InvalidMaxAttempts,
+            ),
+        ];
+
+        for (error, expected_code) in cases {
+            let code: HuntErrorCode = error.into();
+            assert_eq!(code, expected_code);
+        }
+    }
+
+    #[test]
     fn test_clue_not_found_converts_to_code() {
         let err = HuntError::ClueNotFound;
         let code: HuntErrorCode = err.into();
