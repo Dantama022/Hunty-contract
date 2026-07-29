@@ -13,5 +13,7 @@
   },
   "devDependencies": {
     "typescript": "^5.6.2"
-  }
+  },
+  "contractHash": "d40a0f5202c822a209183ac67691e32bbb26be5ada93cb4c18e4bc05214a4bf9",
+  "sourceCommit": "7cddd5da4d360fb7e54be3e300575004c3bad706"
 }

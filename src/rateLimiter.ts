@@ -18,21 +18,6 @@ export class MintRateLimiter {
   }
 
   async check(address: string): Promise<void> {
-  private cleanupStaleRecords(): void {
-    const now = Date.now();
-    const cutoff = now - this.config.windowMs;
-    
-    for (const [address, record] of this.records.entries()) {
-      const recentTimestamps = record.timestamps.filter(t => t > cutoff);
-      if (recentTimestamps.length === 0) {
-        this.records.delete(address);
-      } else if (recentTimestamps.length !== record.timestamps.length) {
-        record.timestamps = recentTimestamps;
-      }
-    }
-  }
-
-  check(address: string): void {
     const now = Date.now();
     const cutoff = now - this.config.windowMs;
     const recentMints = await this.store.getRecent(address, cutoff);
@@ -57,11 +42,6 @@ export class MintRateLimiter {
       const cooldownMs = result.oldestRecent + this.config.windowMs - now;
       throw new MintRateLimitError(cooldownMs);
     }
-    record.timestamps = [...record.timestamps.filter(t => t > cutoff), now];
-    this.records.set(address, record);
-    
-    // Opportunistically cleanup stale records to prevent unbounded growth
-    this.cleanupStaleRecords();
   }
 
   async mint(address: string): Promise<void> {

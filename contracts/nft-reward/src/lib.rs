@@ -2,11 +2,6 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Map,
     String, Symbol, Val, Vec,
-    contract, contractimpl, contracttype, panic_with_error, Address, Env, Map, String, Symbol,
-    Val, Vec,
-    contract, contract, contractimpl, contractimpl, contracttype, contracttype, panic_with_error,
-    panic_with_error, symbol_short, symbol_short, Address, Address, Env, Env, Map, Map, String,
-    String, Symbol, Symbol, Val, Val, Vec, Vec,
 };
 
 const MAX_URI_LEN: usize = 512;
@@ -281,7 +276,7 @@ impl NftReward {
     /// The unique NFT ID of the minted NFT
     pub fn mint_reward_nft(
         env: Env,
-        _minter: Address,
+        minter: Address,
         hunt_id: u64,
         player_address: Address,
         metadata: NftMetadata,
@@ -310,7 +305,7 @@ impl NftReward {
     /// - "extensions": Map<String, String> (optional, arbitrary key-value metadata)
     pub fn mint_reward_nft_from_map(
         env: Env,
-        _minter: Address,
+        minter: Address,
         hunt_id: u64,
         player_address: Address,
         metadata: Map<Symbol, Val>,
@@ -468,6 +463,7 @@ impl NftReward {
             nft_id,
             hunt_id,
             owner: player_address.clone(),
+            completion_player: player_address.clone(),
             metadata: metadata.clone(),
             transferable,
             minted_at,
@@ -487,10 +483,6 @@ impl NftReward {
             owner: player_address,
             rarity: nft_data.metadata.rarity,
             tier: nft_data.metadata.tier,
-            metadata,
-            rarity: metadata.rarity,
-            tier: metadata.tier,
-            metadata: metadata.clone(),
             minted_at,
         };
         env.events()
@@ -1196,9 +1188,6 @@ impl NftReward {
                 owner,
             },
         );
-
-        env.events()
-            .publish((Symbol::new(&env, "NftBurned"), nft_id), (nft_id, owner));
 
         Ok(())
     }

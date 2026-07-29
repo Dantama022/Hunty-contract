@@ -1,7 +1,7 @@
 use crate::errors::HuntError;
 use crate::types::{
     Clue, Hunt, HuntCache, HuntStatus, LeaderboardIndexEntry, PlayerProgress, RewardConfig,
-    StoredPlayerProgress,
+    StoredPlayerProgress, Team, TeamProgress,
 };
 use soroban_sdk::xdr::FromXdr;
 use soroban_sdk::{contracttype, symbol_short, Address, Env, IntoVal, TryFromVal, Val, Vec};
@@ -182,7 +182,7 @@ impl Storage {
     pub fn get_hunt(env: &Env, hunt_id: u64) -> Option<Hunt> {
         let key = Self::hunt_key(hunt_id);
         let raw: Option<Val> = env.storage().persistent().get(&key);
-        let result = raw.and_then(|value| {
+        let mut result = raw.and_then(|value| {
             if let Ok(hunt) = Hunt::try_from_val(env, &value) {
                 return Some(hunt);
             }
@@ -239,9 +239,14 @@ impl Storage {
                     allow_partial_scoring: false,
                     team_mode: false,
                     default_points: 100, // Default value for legacy hunts
+                    attempt_cooldown_secs: 0,
+                    max_players: 0,
+                    is_private: false,
+                    invite_code_hash: None,
+                    remaining_slots: 0,
                 })
         });
-        if let Some(ref hunt) = result {
+        if let Some(ref mut hunt) = result {
             let policy = match hunt.status {
                 crate::types::HuntStatus::Active => TtlPolicy::Active,
                 crate::types::HuntStatus::Completed | crate::types::HuntStatus::Cancelled => {
@@ -924,11 +929,6 @@ impl Storage {
         addrs
     }
 
-    pub fn get_player_count(env: &Env, hunt_id: u64) -> u32 {
-        let count_key = Self::player_count_key(hunt_id);
-        env.storage().persistent().get(&count_key).unwrap_or(0)
-    }
-
     // ========== Hunt Counter Functions ==========
 
     /// Increments and returns the next hunt ID.
@@ -962,10 +962,6 @@ impl Storage {
             extend_ttl(env, &key, TtlPolicy::Critical);
         }
         result.unwrap_or(0)
-    }
-
-    pub fn get_player_completed_hunt_count(_env: &Env, _player: &Address) -> u32 {
-        0
     }
 
     // ========== Clue Counter (per hunt) Functions ==========
