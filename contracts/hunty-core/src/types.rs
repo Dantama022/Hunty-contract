@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Map, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +59,16 @@ pub struct Hunt {
     pub team_mode: bool,
     /// Default point value applied to clues with 0 points. Clue-level points override this.
     pub default_points: u32,
+    /// Minimum seconds a player must wait between attempts on the same clue.
+    pub attempt_cooldown_secs: u32,
+    /// Maximum number of players allowed to register. 0 = unlimited.
+    pub max_players: u32,
+    /// When true, only players with a valid invite code may register.
+    pub is_private: bool,
+    /// SHA256 hash (salted with hunt_id) of the invite code, if configured.
+    pub invite_code_hash: Option<BytesN<32>>,
+    /// Dynamically recalculated on every `get_hunt` read; not meaningful when read from a raw struct literal.
+    pub remaining_slots: u32,
 }
 
 #[contracttype]
@@ -212,6 +222,7 @@ pub struct StoredPlayerProgress {
     pub flags: u32,
     pub recent_submissions: Vec<u64>,
     pub clue_last_attempts: Map<u32, u64>,
+    pub required_completed_count: u32,
 }
 
 
@@ -296,6 +307,7 @@ impl PlayerProgress {
             flags,
             recent_submissions: self.recent_submissions.clone(),
             clue_last_attempts: self.clue_last_attempts.clone(),
+            required_completed_count: self.required_completed_count,
         }
     }
 
@@ -330,6 +342,7 @@ impl PlayerProgress {
             completed_clue_index,
             hinted_clues: stored.hinted_clues,
             total_score: stored.total_score,
+            required_completed_count: stored.required_completed_count,
             started_at,
             completed_at,
             is_completed: (stored.flags & 0b0000_0001) != 0,

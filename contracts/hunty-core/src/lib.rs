@@ -1,18 +1,20 @@
 #![no_std]
 use crate::errors::{HuntError, HuntErrorCode};
-use crate::storage::{HuntCache, Storage};
+use crate::storage::Storage;
 use crate::types::{
     AnswerIncorrectEvent, BatchClueInput, Clue, ClueAddedEvent, ClueAliasesAddedEvent,
     ClueCompletedEvent, ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt,
-    HuntActivatedEvent, HuntArchivedEvent, HuntCancelledEvent, HuntClosedEvent, HuntCompletedEvent,
-    HuntCreatedEvent, HuntDeactivatedEvent, HuntDescriptionUpdatedEvent, HuntReactivatedEvent,
-    HuntStatistics, HuntStatus, HuntStatusChangedEvent, LeaderboardEntry, LeaderboardIndexEntry, LeaderboardResult,
-    PlayerProgress, PlayerRegisteredEvent, RewardClaimedEvent, RewardConfig, RewardManagerSetEvent,
-    TimeBonusConfig,
+    HuntActivatedEvent, HuntArchivedEvent, HuntCache, HuntCancelledEvent, HuntClonedEvent,
+    HuntClosedEvent,
+    HuntCompletedEvent, HuntCreatedEvent, HuntDeactivatedEvent, HuntDescriptionUpdatedEvent,
+    HuntReactivatedEvent, HuntStatistics, HuntStatus, HuntStatusChangedEvent,
+    InviteCodeGeneratedEvent, InviteCodeRevokedEvent, LeaderboardEntry, LeaderboardIndexEntry,
+    LeaderboardResult, PlayerProgress, PlayerRegisteredEvent, PlayerRegisteredWithInviteEvent,
+    RewardClaimedEvent, RewardConfig, RewardManagerSetEvent, TimeBonusConfig,
 };
 use reward_interface::RewardErrorCode;
 use soroban_sdk::{
-    contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, Val, Vec,
+    contract, contractimpl, Address, Bytes, BytesN, Env, IntoVal, String, Symbol, Val, Vec,
 };
 
 const MAX_TITLE_BYTES: u32 = 200;
@@ -187,6 +189,11 @@ impl HuntyCore {
             allow_partial_scoring: false,
             team_mode: false,
             default_points: default_points.unwrap_or(100),
+            attempt_cooldown_secs: 0,
+            max_players: 0,
+            is_private: false,
+            invite_code_hash: None,
+            remaining_slots: 0,
         };
 
         // Store the hunt
@@ -242,8 +249,6 @@ impl HuntyCore {
             Some(template_hunt.default_points),
         )?;
 
-        let template_clues =
-            Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
         let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
         // Clone each clue from the template
         let template_clues = Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
@@ -297,7 +302,7 @@ impl HuntyCore {
         env: Env,
         hunt_id: u64,
         caller: Address,
-        _bonus_config: Option<TimeBonusConfig>,
+        time_bonus_config: Option<TimeBonusConfig>,
     ) -> Result<(), HuntErrorCode> {
         caller.require_auth();
 
@@ -589,14 +594,7 @@ impl HuntyCore {
             .map_err(HuntErrorCode::from)?;
         let mut answer_hashes = Vec::new(&env);
         answer_hashes.push_back(answer_hash);
-        
-        let answer_hash =
-            Self::normalize_and_hash_answer(env, &answer).map_err(HuntErrorCode::from)?;
-        let clue_id = Storage::next_clue_id(env, hunt_id);
-        let mut answer_hashes: Vec<BytesN<32>> = Vec::new(env);
-        answer_hashes.push_back(answer_hash);
-        let difficulty_u32 = difficulty as u32;
-        let weight = 1u32;
+
         let clue = Clue {
             clue_id,
             question: question.clone(),
@@ -608,26 +606,16 @@ impl HuntyCore {
             hint: None,
             hint_penalty_points: 0,
         };
-        
+
         Storage::save_clue(&env, hunt_id, &clue);
-        
+
         let mut updated = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
-            difficulty: difficulty_u32,
-            weight,
-            hint: None,
-            hint_penalty_points: 0,
-        };
-        Storage::save_clue(env, hunt_id, &clue);
-        let mut updated = Storage::get_hunt_or_error(env, hunt_id).map_err(HuntErrorCode::from)?;
         updated.total_clues += 1;
         if is_required {
             updated.required_clues += 1;
         }
         Self::recalculate_hunt_difficulty(&env, hunt_id, &mut updated);
         Storage::save_hunt(&env, &updated);
-        
-        Self::recalculate_hunt_difficulty(env, hunt_id, &mut updated);
-        Storage::save_hunt(env, &updated);
         let event = ClueAddedEvent {
             hunt_id,
             clue_id,
@@ -637,8 +625,6 @@ impl HuntyCore {
             is_required,
             difficulty: difficulty_val,
             weight: weight_val,
-            difficulty: difficulty_u32,
-            weight,
         };
         env.events()
             .publish((Symbol::new(env, "ClueAdded"), hunt_id, clue_id), event);
@@ -1883,7 +1869,7 @@ impl HuntyCore {
 
         // Reject public registration for private hunts
         if hunt.is_private {
-            return Err(HuntErrorCode::HuntIsPrivate);
+            return Err(HuntErrorCode::InvalidHuntStatus);
         }
 
         // Cache read: cheaper than loading full Hunt from persistent storage
@@ -1891,7 +1877,7 @@ impl HuntyCore {
 
         // Enforce the registration deadline if the creator configured one
         if hunt.registration_deadline != 0 && current_time >= hunt.registration_deadline {
-            return Err(HuntErrorCode::RegistrationClosed);
+            return Err(HuntErrorCode::RegistrationsPaused);
         }
 
         let progress = PlayerProgress::new(&env, player.clone(), hunt_id, current_time);
@@ -1946,14 +1932,13 @@ impl HuntyCore {
 
         // Hash the invite code with hunt_id as salt to prevent rainbow-table attacks.
         // Use the same buffer-based approach as normalize_and_hash_answer for consistency.
-        let invite_code_bytes = invite_code.as_bytes();
-        let code_len = invite_code_bytes.len() as usize;
+        let code_len = invite_code.len() as usize;
         if code_len == 0 {
-            return Err(HuntErrorCode::InvalidInviteCode);
+            return Err(HuntErrorCode::InvalidAnswer);
         }
         let mut buf = [0u8; 264]; // 8 (hunt_id) + 256 (max invite code)
         buf[..8].copy_from_slice(&hunt_id.to_be_bytes());
-        invite_code_bytes.copy_into_slice(&mut buf[8..8 + code_len]);
+        invite_code.copy_into_slice(&mut buf[8..8 + code_len]);
         let salted = Bytes::from_slice(&env, &buf[..8 + code_len]);
         let hash = env.crypto().sha256(&salted);
         let hash_bytes: BytesN<32> = hash.to_bytes();
@@ -2090,10 +2075,9 @@ impl HuntyCore {
     ///
     /// # Errors
     /// * `HuntNotFound` - Hunt does not exist
-    /// * `InvalidHuntStatus` - Hunt is not in Active status
-    /// * `HuntIsPrivate` - Hunt is not private (use `register_player` instead)
-    /// * `InviteNotConfigured` - Hunt is private but has no invite code set
-    /// * `InvalidInviteCode` - The provided invite code does not match
+    /// * `InvalidHuntStatus` - Hunt is not in Active status, is not private (use
+    ///   `register_player` instead), or has no invite code configured
+    /// * `InvalidAnswer` - The provided invite code is empty or does not match
     /// * `DuplicateRegistration` - Player is already registered for this hunt
     pub fn register_with_invite(
         env: Env,
@@ -2121,24 +2105,23 @@ impl HuntyCore {
 
         let stored_hash = hunt
             .invite_code_hash
-            .ok_or(HuntErrorCode::InviteNotConfigured)?;
+            .ok_or(HuntErrorCode::InvalidHuntStatus)?;
 
         // Hash the provided invite code with the same salt (hunt_id) and compare.
         // Use the same buffer-based approach as generate_invite_code for consistency.
-        let invite_code_bytes = invite_code.as_bytes();
-        let code_len = invite_code_bytes.len() as usize;
+        let code_len = invite_code.len() as usize;
         if code_len == 0 {
-            return Err(HuntErrorCode::InvalidInviteCode);
+            return Err(HuntErrorCode::InvalidAnswer);
         }
         let mut buf = [0u8; 264]; // 8 (hunt_id) + 256 (max invite code)
         buf[..8].copy_from_slice(&hunt_id.to_be_bytes());
-        invite_code_bytes.copy_into_slice(&mut buf[8..8 + code_len]);
+        invite_code.copy_into_slice(&mut buf[8..8 + code_len]);
         let salted = Bytes::from_slice(&env, &buf[..8 + code_len]);
         let computed_hash = env.crypto().sha256(&salted);
         let computed_hash_bytes: BytesN<32> = computed_hash.to_bytes();
 
         if computed_hash_bytes != stored_hash {
-            return Err(HuntErrorCode::InvalidInviteCode);
+            return Err(HuntErrorCode::InvalidAnswer);
         }
 
         let current_time = env.ledger().timestamp();
@@ -2281,9 +2264,45 @@ impl HuntyCore {
         }
     }
 
+    /// In team mode, returns true if any teammate has already completed this clue.
+    fn team_has_completed_clue(env: &Env, hunt: &Hunt, player: &Address, clue_id: u32) -> bool {
+        if !hunt.team_mode {
+            return false;
+        }
+        let Some(team_id) = Storage::get_player_team(env, hunt.hunt_id, player) else {
+            return false;
+        };
+        let team_progress = Storage::get_team_progress(env, hunt.hunt_id, team_id);
+        team_progress.completed_clues.contains(&clue_id)
+    }
+
+    /// In team mode, records a clue completion against the player's team so
+    /// teammates see it as already solved and share the earned score.
+    fn record_team_clue_completion(
+        env: &Env,
+        hunt: &Hunt,
+        player: &Address,
+        clue_id: u32,
+        score: u32,
+    ) {
+        if !hunt.team_mode {
+            return;
+        }
+        let Some(team_id) = Storage::get_player_team(env, hunt.hunt_id, player) else {
+            return;
+        };
+        let mut team_progress = Storage::get_team_progress(env, hunt.hunt_id, team_id);
+        if team_progress.completed_clues.contains(&clue_id) {
+            return;
+        }
+        team_progress.completed_clues.push_back(clue_id);
+        team_progress.total_score = team_progress.total_score.saturating_add(score);
+        Storage::save_team_progress(env, hunt.hunt_id, team_id, &team_progress);
+    }
+
     fn is_answer_correct(clue: &Clue, submitted_hash: &BytesN<32>) -> bool {
         for i in 0..clue.answer_hashes.len() {
-            if clue.answer_hashes.get(i).unwrap() == submitted_hash {
+            if clue.answer_hashes.get(i).unwrap() == *submitted_hash {
                 return true;
             }
         }
