@@ -638,6 +638,8 @@ stellar contract invoke \
 ### Step 4 — Persist contract addresses
 
 Save the addresses so they can be reused across sessions and by your frontend.
+`.env.testnet` is git-ignored (only the `.env.testnet.example` template is tracked),
+so real values written here stay out of version control.
 
 ```bash
 cat << EOF > .env.testnet
@@ -704,7 +706,9 @@ stellar contract invoke \
 - Replace `--network testnet` with `--network mainnet` in every command above.
 - Use the mainnet XLM SAC: `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA`.
 - Verify each contract ID with `stellar contract info --id <ID> --network mainnet` before calling `initialize`.
-- Keep `.env.mainnet` out of version control (add it to `.gitignore`).
+- Keep `.env.mainnet` out of version control. `.gitignore` already ignores `.env.*` and
+  re-includes only `.env.*.example`, so start from `cp .env.mainnet.example .env.mainnet`
+  and never commit the filled-in file. Verify with `git check-ignore -v .env.mainnet`.
 - **Review the [Storage Architecture & TTL Management](#storage-architecture--ttl-management) section** and confirm bump-on-read is implemented before deploying.
 
 ## Resources

@@ -1,10 +1,15 @@
 use crate::errors::HuntError;
-use crate::types::{Clue, Hunt, LeaderboardIndexEntry, PlayerProgress};
-use soroban_sdk::{symbol_short, Address, Env, IntoVal, Map, Vec};
-
+use crate::types::{
+    Clue, Hunt, HuntCache, HuntStatus, LeaderboardIndexEntry, PlayerProgress, RewardConfig,
+    StoredPlayerProgress, Team, TeamProgress,
+};
+use soroban_sdk::xdr::FromXdr;
+use soroban_sdk::{contracttype, symbol_short, Address, Env, IntoVal, TryFromVal, Val, Vec};
 // Instance TTL constants used by blacklist and contract-pause storage.
 const INSTANCE_TTL_THRESHOLD: u32 = 518_400;
 const INSTANCE_TTL_EXTEND_TO: u32 = 518_400;
+const PERSISTENT_TTL_THRESHOLD: u32 = 172_800;
+const PERSISTENT_TTL_EXTEND_TO: u32 = 518_400;
 
 /// Storage access layer for hunts, clues, and player progress.
 /// Provides type-safe, efficient storage operations with consistent key management.
@@ -54,11 +59,16 @@ impl Storage {
     // Using symbol_short for efficient key generation
     // Shortened, unique storage key prefixes (reduced to minimal unique prefixes)
     const HUNT_KEY: soroban_sdk::Symbol = symbol_short!("HUNT");
+    const HUNT_CACHE_KEY: soroban_sdk::Symbol = symbol_short!("HC");
     const CLUE_KEY: soroban_sdk::Symbol = symbol_short!("CLU");
     const PROGRESS_KEY: soroban_sdk::Symbol = symbol_short!("PR");
     const PLAYERS_LIST_KEY: soroban_sdk::Symbol = symbol_short!("PL");
     const LEADERBOARD_KEY: soroban_sdk::Symbol = symbol_short!("LBD");
     const CLUES_LIST_KEY: soroban_sdk::Symbol = symbol_short!("CLS");
+    const PLAYER_ENTRY_KEY: soroban_sdk::Symbol = symbol_short!("PLRS");
+    const PLAYER_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("PLCT");
+    const CLUE_ENTRY_KEY: soroban_sdk::Symbol = symbol_short!("CLST");
+    const CLUE_LIST_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("CLCT");
     const HUNT_COUNTER_KEY: soroban_sdk::Symbol = symbol_short!("CN");
     const CLUE_COUNTER_KEY: soroban_sdk::Symbol = symbol_short!("CC");
     const REWARD_MGR_KEY: soroban_sdk::Symbol = symbol_short!("R");
@@ -71,42 +81,73 @@ impl Storage {
     const PAUSE_ANSWERS_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE_A");
     const PAUSE_REWARDS_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE_RW");
     const CONTRACT_PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("CPAUSED");
-    const BLACKLIST_KEY: soroban_sdk::Symbol = symbol_short!("BLKLST");
+    const REQUIRED_CLUES_KEY: soroban_sdk::Symbol = symbol_short!("REQCL");
+    const CACHE_HIT_KEY: soroban_sdk::Symbol = symbol_short!("CHIT");
+    const CACHE_MISS_KEY: soroban_sdk::Symbol = symbol_short!("CMISS");
+    const PLAYER_HUNTS_KEY: soroban_sdk::Symbol = symbol_short!("PHNT");
+    const TEAM_KEY: soroban_sdk::Symbol = symbol_short!("TEAM");
+    const TEAM_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("TMCT");
+    const PLAYER_TEAM_KEY: soroban_sdk::Symbol = symbol_short!("PLTM");
+    const TEAM_PROGRESS_KEY: soroban_sdk::Symbol = symbol_short!("TMPR");
 
     // Pause functions (granular: registrations, answers, rewards)
     pub fn set_pause_registrations(env: &Env, paused: bool) {
-        env.storage().instance().set(&Self::PAUSE_REGISTRATIONS_KEY, &paused);
+        env.storage()
+            .instance()
+            .set(&Self::PAUSE_REGISTRATIONS_KEY, &paused);
     }
     pub fn is_pause_registrations(env: &Env) -> bool {
-        env.storage().instance().get(&Self::PAUSE_REGISTRATIONS_KEY).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&Self::PAUSE_REGISTRATIONS_KEY)
+            .unwrap_or(false)
     }
 
     pub fn set_pause_answers(env: &Env, paused: bool) {
-        env.storage().instance().set(&Self::PAUSE_ANSWERS_KEY, &paused);
+        env.storage()
+            .instance()
+            .set(&Self::PAUSE_ANSWERS_KEY, &paused);
     }
     pub fn is_pause_answers(env: &Env) -> bool {
-        env.storage().instance().get(&Self::PAUSE_ANSWERS_KEY).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&Self::PAUSE_ANSWERS_KEY)
+            .unwrap_or(false)
     }
 
     pub fn set_pause_rewards(env: &Env, paused: bool) {
-        env.storage().instance().set(&Self::PAUSE_REWARDS_KEY, &paused);
+        env.storage()
+            .instance()
+            .set(&Self::PAUSE_REWARDS_KEY, &paused);
     }
     pub fn is_pause_rewards(env: &Env) -> bool {
-        env.storage().instance().get(&Self::PAUSE_REWARDS_KEY).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&Self::PAUSE_REWARDS_KEY)
+            .unwrap_or(false)
     }
 
     // Global contract pause (emergency stop for all operations)
     pub fn set_contract_paused(env: &Env, paused: bool) {
-        env.storage().instance().set(&Self::CONTRACT_PAUSED_KEY, &paused);
-        env.storage().instance().extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+        env.storage()
+            .instance()
+            .set(&Self::CONTRACT_PAUSED_KEY, &paused);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
     }
     pub fn is_contract_paused(env: &Env) -> bool {
-        env.storage().instance().get(&Self::CONTRACT_PAUSED_KEY).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&Self::CONTRACT_PAUSED_KEY)
+            .unwrap_or(false)
     }
 
     // ========== Hunt Storage Functions ==========
 
     /// Saves a Hunt struct with a unique key based on hunt_id.
+    /// Also automatically saves/refreshes the instance-storage cache
+    /// so that subsequent reads can use the cheaper HuntCache path.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment
@@ -117,6 +158,7 @@ impl Storage {
     pub fn save_hunt(env: &Env, hunt: &Hunt) {
         let key = Self::hunt_key(hunt.hunt_id);
         env.storage().persistent().set(&key, hunt);
+        Self::save_hunt_cache(env, hunt);
         let policy = match hunt.status {
             crate::types::HuntStatus::Active => TtlPolicy::Active,
             crate::types::HuntStatus::Completed | crate::types::HuntStatus::Cancelled => {
@@ -125,6 +167,8 @@ impl Storage {
             _ => TtlPolicy::Default,
         };
         extend_ttl(env, &key, policy);
+        // Keep the instance-storage cache coherent with persistent state.
+        Self::save_hunt_cache(env, hunt);
     }
 
     /// Retrieves a hunt by ID, returning an Option.
@@ -137,8 +181,72 @@ impl Storage {
     /// * `Some(Hunt)` if the hunt exists, `None` otherwise
     pub fn get_hunt(env: &Env, hunt_id: u64) -> Option<Hunt> {
         let key = Self::hunt_key(hunt_id);
-        let result: Option<Hunt> = env.storage().persistent().get(&key);
-        if let Some(ref hunt) = result {
+        let raw: Option<Val> = env.storage().persistent().get(&key);
+        let mut result = raw.and_then(|value| {
+            if let Ok(hunt) = Hunt::try_from_val(env, &value) {
+                return Some(hunt);
+            }
+
+            #[contracttype]
+            #[derive(Clone, Debug)]
+            struct LegacyHunt {
+                pub hunt_id: u64,
+                pub creator: Address,
+                pub title: soroban_sdk::String,
+                pub description: soroban_sdk::String,
+                pub status: HuntStatus,
+                pub created_at: u64,
+                pub activated_at: u64,
+                pub end_time: u64,
+                pub reward_config: RewardConfig,
+                pub time_bonus_start_bps: Option<u32>,
+                pub time_bonus_min_bps: Option<u32>,
+                pub time_bonus_decay_secs: Option<u64>,
+                pub total_clues: u32,
+                pub required_clues: u32,
+                pub completed_count: u32,
+                pub max_submissions_per_minute: u32,
+                pub max_attempts_per_clue: u32,
+                pub start_multiplier_bps: u32,
+            }
+
+            LegacyHunt::try_from_val(env, &value)
+                .ok()
+                .map(|legacy| Hunt {
+                    hunt_id: legacy.hunt_id,
+                    creator: legacy.creator,
+                    title: legacy.title,
+                    description: legacy.description,
+                    categories: Vec::new(env),
+                    difficulty_rating: 0,
+                    difficulty_override: None,
+                    status: legacy.status,
+                    created_at: legacy.created_at,
+                    activated_at: legacy.activated_at,
+                    start_time: 0,
+                    end_time: legacy.end_time,
+                    reward_config: legacy.reward_config,
+                    time_bonus_start_bps: legacy.time_bonus_start_bps,
+                    time_bonus_min_bps: legacy.time_bonus_min_bps,
+                    time_bonus_decay_secs: legacy.time_bonus_decay_secs,
+                    total_clues: legacy.total_clues,
+                    required_clues: legacy.required_clues,
+                    completed_count: legacy.completed_count,
+                    max_submissions_per_minute: legacy.max_submissions_per_minute,
+                    max_attempts_per_clue: legacy.max_attempts_per_clue,
+                    start_multiplier_bps: legacy.start_multiplier_bps,
+                    registration_deadline: 0,
+                    allow_partial_scoring: false,
+                    team_mode: false,
+                    default_points: 100, // Default value for legacy hunts
+                    attempt_cooldown_secs: 0,
+                    max_players: 0,
+                    is_private: false,
+                    invite_code_hash: None,
+                    remaining_slots: 0,
+                })
+        });
+        if let Some(ref mut hunt) = result {
             let policy = match hunt.status {
                 crate::types::HuntStatus::Active => TtlPolicy::Active,
                 crate::types::HuntStatus::Completed | crate::types::HuntStatus::Cancelled => {
@@ -147,6 +255,15 @@ impl Storage {
                 _ => TtlPolicy::Default,
             };
             extend_ttl(env, &key, policy);
+
+            // Dynamically calculate remaining slots
+            let count_key = Self::player_count_key(hunt_id);
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+            hunt.remaining_slots = if hunt.max_players == 0 {
+                0
+            } else {
+                hunt.max_players.saturating_sub(count)
+            };
         }
         result
     }
@@ -161,7 +278,91 @@ impl Storage {
     /// * `Ok(Hunt)` if the hunt exists
     /// * `Err(HuntError)` if the hunt is not found
     pub fn get_hunt_or_error(env: &Env, hunt_id: u64) -> Result<Hunt, HuntError> {
-        Self::get_hunt(env, hunt_id).ok_or(HuntError::HuntNotFound { hunt_id })
+        Self::get_hunt(env, hunt_id).ok_or(HuntError::HuntNotFound)
+    }
+
+    // ========== Hunt Cache Functions (instance storage) ==========
+
+    /// Saves a compact HuntCache to instance storage for faster reads.
+    /// The cache contains only frequently-accessed fields (no title/description strings).
+    /// Also extends the instance TTL so the cache stays warm for active hunts.
+    pub fn save_hunt_cache(env: &Env, hunt: &Hunt) {
+        let cache = HuntCache::from_hunt(hunt);
+        let key = Self::hunt_cache_key(hunt.hunt_id);
+        env.storage().instance().set(&key, &cache);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    }
+
+    /// Retrieves a HuntCache from instance storage.
+    /// Returns None if no cache exists for this hunt_id.
+    /// Records cache hit/miss for monitoring.
+    pub fn get_hunt_cache(env: &Env, hunt_id: u64) -> Option<HuntCache> {
+        let key = Self::hunt_cache_key(hunt_id);
+        let result: Option<HuntCache> = env.storage().instance().get(&key);
+        if result.is_some() {
+            Self::record_cache_hit(env);
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+        } else {
+            Self::record_cache_miss(env);
+        }
+        result
+    }
+
+    /// Removes the HuntCache for a given hunt from instance storage.
+    /// Use when a hunt is updated and the cache should be refreshed.
+    pub fn invalidate_hunt_cache(env: &Env, hunt_id: u64) {
+        let key = Self::hunt_cache_key(hunt_id);
+        env.storage().instance().remove(&key);
+    }
+
+    /// Bumps the instance TTL for the hunt cache without modifying its value.
+    /// Useful for keeping hot hunt caches alive between operations.
+    pub fn bump_hunt_cache_ttl(env: &Env, hunt_id: u64) {
+        let key = Self::hunt_cache_key(hunt_id);
+        if env.storage().instance().has(&key) {
+            env.storage()
+                .instance()
+                .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+        }
+    }
+
+    /// Resets cache hit/miss counters (admin use only).
+    pub fn reset_cache_counters(env: &Env) {
+        env.storage().instance().remove(&Self::CACHE_HIT_KEY);
+        env.storage().instance().remove(&Self::CACHE_MISS_KEY);
+    }
+
+    pub fn record_cache_hit(env: &Env) {
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&Self::CACHE_HIT_KEY)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&Self::CACHE_HIT_KEY, &(count + 1));
+    }
+
+    pub fn record_cache_miss(env: &Env) {
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&Self::CACHE_MISS_KEY)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&Self::CACHE_MISS_KEY, &(count + 1));
+    }
+
+    /// Checks whether a HuntCache exists in instance storage.
+    /// Useful for cheap existence checks without loading the full Hunt struct.
+    pub fn has_hunt_cache(env: &Env, hunt_id: u64) -> bool {
+        let key = Self::hunt_cache_key(hunt_id);
+        env.storage().instance().has(&key)
     }
 
     // ========== Clue Storage Functions ==========
@@ -181,6 +382,9 @@ impl Storage {
 
         // Update the list of clue IDs for this hunt
         Self::add_clue_to_list(env, hunt_id, clue.clue_id);
+        if clue.is_required {
+            Self::add_required_clue(env, hunt_id, clue.clue_id);
+        }
     }
 
     /// Retrieves an individual clue by hunt_id and clue_id.
@@ -194,7 +398,42 @@ impl Storage {
     /// * `Some(Clue)` if the clue exists, `None` otherwise
     pub fn get_clue(env: &Env, hunt_id: u64, clue_id: u32) -> Option<Clue> {
         let key = Self::clue_key(hunt_id, clue_id);
-        let result: Option<Clue> = env.storage().persistent().get(&key);
+        let val: Option<Val> = env.storage().persistent().get(&key);
+
+        let result = val.and_then(|v| {
+            // First try to deserialize as new Clue
+            if let Ok(clue) = Clue::try_from_val(env, &v) {
+                return Some(clue);
+            }
+            // If that fails, try to deserialize as LegacyClue and convert
+            #[contracttype]
+            #[derive(Clone, Debug)]
+            struct LegacyClue {
+                pub clue_id: u32,
+                pub question: soroban_sdk::String,
+                pub answer_hashes: soroban_sdk::Vec<soroban_sdk::BytesN<32>>,
+                pub points: u32,
+                pub is_required: bool,
+                pub difficulty: u32,
+            }
+
+            if let Ok(legacy) = LegacyClue::try_from_val(env, &v) {
+                Some(Clue {
+                    clue_id: legacy.clue_id,
+                    question: legacy.question,
+                    answer_hashes: legacy.answer_hashes,
+                    points: legacy.points,
+                    is_required: legacy.is_required,
+                    difficulty: legacy.difficulty,
+                    weight: 1,
+                    hint: None,
+                    hint_penalty_points: 0,
+                })
+            } else {
+                None
+            }
+        });
+
         if result.is_some() {
             extend_ttl(env, &key, TtlPolicy::Active);
         }
@@ -212,7 +451,7 @@ impl Storage {
     /// * `Ok(Clue)` if the clue exists
     /// * `Err(HuntError)` if the clue is not found
     pub fn get_clue_or_error(env: &Env, hunt_id: u64, clue_id: u32) -> Result<Clue, HuntError> {
-        Self::get_clue(env, hunt_id, clue_id).ok_or(HuntError::ClueNotFound { hunt_id })
+        Self::get_clue(env, hunt_id, clue_id).ok_or(HuntError::ClueNotFound)
     }
 
     pub fn list_clues_for_hunt(env: &Env, hunt_id: u64, offset: u32, limit: u32) -> Vec<Clue> {
@@ -239,9 +478,15 @@ impl Storage {
     /// * `env` - The Soroban environment
     /// * `progress` - The PlayerProgress struct to store
     pub fn save_player_progress(env: &Env, progress: &PlayerProgress) {
-        // Store the progress with composite key (hunt_id + player address)
+        // Store the progress with composite key (hunt_id + player address),
+        // in compact form (key fields player/hunt_id are not duplicated).
         let key = Self::progress_key(progress.hunt_id, &progress.player);
-        env.storage().persistent().set(&key, progress);
+        let activated_at = Self::get_hunt(env, progress.hunt_id)
+            .map(|h| h.activated_at)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&key, &progress.to_stored(activated_at));
         let policy = if progress.is_completed || progress.reward_claimed {
             TtlPolicy::Short
         } else {
@@ -262,25 +507,62 @@ impl Storage {
     ///
     /// # Returns
     /// * `Some(PlayerProgress)` if progress exists, `None` otherwise
+    /// Safely attempts to retrieve and deserialize player progress.
+    /// Returns `Ok(None)` if not registered, `Ok(Some(progress))` if successful,
+    /// or `Err(HuntError::CorruptPlayerProgress)` if storage deserialization fails.
+    pub fn try_get_player_progress(
+        env: &Env,
+        hunt_id: u64,
+        player: &Address,
+    ) -> Result<Option<PlayerProgress>, HuntError> {
+        let key = Self::progress_key(hunt_id, player);
+        let activated_at = Self::get_hunt(env, hunt_id)
+            .map(|h| h.activated_at)
+            .unwrap_or(0);
+        let raw_val: Option<Val> = env.storage().persistent().get(&key);
+        let val = match raw_val {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        if let Ok(stored) = StoredPlayerProgress::try_from_val(env, &val) {
+            return Ok(Some(PlayerProgress::from_stored(
+                env,
+                stored,
+                player.clone(),
+                hunt_id,
+                activated_at,
+            )));
+        }
+
+        if let Ok(bytes) = soroban_sdk::Bytes::try_from_val(env, &val) {
+            if let Ok(stored) = StoredPlayerProgress::from_xdr(env, &bytes) {
+                return Ok(Some(PlayerProgress::from_stored(
+                    env,
+                    stored,
+                    player.clone(),
+                    hunt_id,
+                    activated_at,
+                )));
+            }
+        }
+
+        Err(HuntError::CorruptPlayerProgress)
+    }
+
+    /// Retrieves player progress as an Option.
+    /// Returns `None` if not registered or if progress entry is corrupt.
     pub fn get_player_progress(
         env: &Env,
         hunt_id: u64,
         player: &Address,
     ) -> Option<PlayerProgress> {
-        let key = Self::progress_key(hunt_id, player);
-        let raw_val: Option<soroban_sdk::Val> = env.storage().persistent().get(&key);
-        raw_val.map(|val| {
-            if let Ok(bytes) = soroban_sdk::Bytes::try_from_val(env, &val) {
-                let stored: StoredPlayerProgress = StoredPlayerProgress::from_xdr(env, &bytes).unwrap();
-                PlayerProgress::from_stored(stored, player.clone(), hunt_id)
-            } else {
-                let stored: StoredPlayerProgress = StoredPlayerProgress::try_from_val(env, &val).unwrap();
-                PlayerProgress::from_stored(stored, player.clone(), hunt_id)
-            }
-        })
+        Self::try_get_player_progress(env, hunt_id, player)
+            .ok()
+            .flatten()
     }
 
-    /// Retrieves player progress or returns an error if not found.
+    /// Retrieves player progress or returns an error if not found or if entry is corrupt.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment
@@ -288,15 +570,18 @@ impl Storage {
     /// * `player` - The player's address
     ///
     /// # Returns
-    /// * `Ok(PlayerProgress)` if progress exists
-    /// * `Err(HuntError)` if the player is not registered
+    /// * `Ok(PlayerProgress)` if progress exists and is valid
+    /// * `Err(HuntError::PlayerNotRegistered)` if the player is not registered
+    /// * `Err(HuntError::CorruptPlayerProgress)` if progress deserialization fails
     pub fn get_player_progress_or_error(
         env: &Env,
         hunt_id: u64,
         player: &Address,
     ) -> Result<PlayerProgress, HuntError> {
-        Self::get_player_progress(env, hunt_id, player)
-            .ok_or(HuntError::PlayerNotRegistered { hunt_id })
+        match Self::try_get_player_progress(env, hunt_id, player)? {
+            Some(progress) => Ok(progress),
+            None => Err(HuntError::PlayerNotRegistered),
+        }
     }
 
     /// Returns all registered players for a hunt.
@@ -322,32 +607,7 @@ impl Storage {
         progress_list
     }
 
-    pub fn save_leaderboard_index(
-        env: &Env,
-        hunt_id: u64,
-        entries: &Vec<LeaderboardIndexEntry>,
-    ) {
-        let key = Self::leaderboard_key(hunt_id);
-        env.storage().persistent().set(&key, entries);
-        extend_ttl(env, &key, TtlPolicy::Active);
-    }
-
-    pub fn get_leaderboard_index(env: &Env, hunt_id: u64) -> Vec<LeaderboardIndexEntry> {
-        let key = Self::leaderboard_key(hunt_id);
-        let result: Option<Vec<LeaderboardIndexEntry>> = env.storage().persistent().get(&key);
-        if result.is_some() {
-            extend_ttl(env, &key, TtlPolicy::Active);
-        }
-        result.unwrap_or_else(|| Vec::new(env))
-    }
-
-    // ========== Leaderboard Index Storage ==========
-
-    pub fn save_leaderboard_index(
-        env: &Env,
-        hunt_id: u64,
-        entries: &Vec<LeaderboardIndexEntry>,
-    ) {
+    pub fn save_leaderboard_index(env: &Env, hunt_id: u64, entries: &Vec<LeaderboardIndexEntry>) {
         let key = Self::leaderboard_key(hunt_id);
         env.storage().persistent().set(&key, entries);
         extend_ttl(env, &key, TtlPolicy::Active);
@@ -368,6 +628,10 @@ impl Storage {
     /// Uses tuple key (HUNT_KEY, hunt_id) for efficient storage access.
     fn hunt_key(hunt_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::HUNT_KEY, hunt_id)
+    }
+
+    fn hunt_cache_key(hunt_id: u64) -> (soroban_sdk::Symbol, u64) {
+        (Self::HUNT_CACHE_KEY, hunt_id)
     }
 
     /// Generates a composite storage key for a clue.
@@ -406,6 +670,10 @@ impl Storage {
 
     fn leaderboard_key(hunt_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::LEADERBOARD_KEY, hunt_id)
+    }
+
+    fn required_clues_key(hunt_id: u64) -> (soroban_sdk::Symbol, u64) {
+        (Self::REQUIRED_CLUES_KEY, hunt_id)
     }
 
     /// Key for view-only addresses for a hunt.
@@ -453,6 +721,35 @@ impl Storage {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    }
+
+    fn add_required_clue(env: &Env, hunt_id: u64, clue_id: u32) {
+        let key = Self::required_clues_key(hunt_id);
+        let mut ids: Vec<u32> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        if ids.first_index_of(clue_id).is_none() {
+            ids.push_back(clue_id);
+            env.storage().persistent().set(&key, &ids);
+            extend_ttl(env, &key, TtlPolicy::Active);
+        }
+    }
+
+    pub fn set_required_clues(env: &Env, hunt_id: u64, ids: &Vec<u32>) {
+        let key = Self::required_clues_key(hunt_id);
+        env.storage().persistent().set(&key, ids);
+        extend_ttl(env, &key, TtlPolicy::Active);
+    }
+
+    pub fn get_required_clues(env: &Env, hunt_id: u64) -> Vec<u32> {
+        let key = Self::required_clues_key(hunt_id);
+        let result: Option<Vec<u32>> = env.storage().persistent().get(&key);
+        if result.is_some() {
+            extend_ttl(env, &key, TtlPolicy::Active);
+        }
+        result.unwrap_or_else(|| Vec::new(env))
     }
 
     fn get_clue_ids_for_hunt(env: &Env, hunt_id: u64, offset: u32, limit: u32) -> Vec<u32> {
@@ -508,6 +805,110 @@ impl Storage {
             PERSISTENT_TTL_THRESHOLD,
             PERSISTENT_TTL_EXTEND_TO,
         );
+    }
+
+    /// Returns the number of registered players for a hunt.
+    pub fn get_player_count(env: &Env, hunt_id: u64) -> u32 {
+        let count_key = Self::player_count_key(hunt_id);
+        env.storage().persistent().get(&count_key).unwrap_or(0)
+    }
+
+    // ========== Global Player Statistics ==========
+
+    fn player_completed_count_key(player: &Address) -> (soroban_sdk::Symbol, Address) {
+        (Self::PLAYER_HUNTS_KEY, player.clone())
+    }
+
+    /// Returns the total number of hunts this player has completed across all hunts.
+    pub fn get_player_completed_hunt_count(env: &Env, player: &Address) -> u32 {
+        let key = Self::player_completed_count_key(player);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    /// Increments the player's global completed-hunt counter.
+    pub fn increment_player_completed_hunt_count(env: &Env, player: &Address) {
+        let key = Self::player_completed_count_key(player);
+        let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&key, &count.saturating_add(1));
+        extend_ttl(env, &key, TtlPolicy::Default);
+    }
+
+    // ========== Team Storage Functions ==========
+
+    fn team_key(hunt_id: u64, team_id: u32) -> (soroban_sdk::Symbol, u64, u32) {
+        (Self::TEAM_KEY, hunt_id, team_id)
+    }
+
+    fn team_count_key(hunt_id: u64) -> (soroban_sdk::Symbol, u64) {
+        (Self::TEAM_COUNT_KEY, hunt_id)
+    }
+
+    fn player_team_key(hunt_id: u64, player: &Address) -> (soroban_sdk::Symbol, u64, Address) {
+        (Self::PLAYER_TEAM_KEY, hunt_id, player.clone())
+    }
+
+    fn team_progress_key(hunt_id: u64, team_id: u32) -> (soroban_sdk::Symbol, u64, u32) {
+        (Self::TEAM_PROGRESS_KEY, hunt_id, team_id)
+    }
+
+    /// Increments and returns the next team ID for a hunt (sequential from 1).
+    pub fn next_team_id(env: &Env, hunt_id: u64) -> u32 {
+        let key = Self::team_count_key(hunt_id);
+        let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        let next = current + 1;
+        env.storage().persistent().set(&key, &next);
+        extend_ttl(env, &key, TtlPolicy::Active);
+        next
+    }
+
+    /// Returns the number of teams created for a hunt.
+    pub fn get_team_count(env: &Env, hunt_id: u64) -> u32 {
+        let key = Self::team_count_key(hunt_id);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    pub fn save_team(env: &Env, team: &Team) {
+        let key = Self::team_key(team.hunt_id, team.team_id);
+        env.storage().persistent().set(&key, team);
+        extend_ttl(env, &key, TtlPolicy::Active);
+    }
+
+    pub fn get_team(env: &Env, hunt_id: u64, team_id: u32) -> Option<Team> {
+        let key = Self::team_key(hunt_id, team_id);
+        env.storage().persistent().get(&key)
+    }
+
+    /// Records which team a player belongs to within a hunt.
+    pub fn set_player_team(env: &Env, hunt_id: u64, player: &Address, team_id: u32) {
+        let key = Self::player_team_key(hunt_id, player);
+        env.storage().persistent().set(&key, &team_id);
+        extend_ttl(env, &key, TtlPolicy::Active);
+    }
+
+    /// Returns the team ID a player belongs to within a hunt, if any.
+    pub fn get_player_team(env: &Env, hunt_id: u64, player: &Address) -> Option<u32> {
+        let key = Self::player_team_key(hunt_id, player);
+        env.storage().persistent().get(&key)
+    }
+
+    pub fn save_team_progress(env: &Env, hunt_id: u64, team_id: u32, progress: &TeamProgress) {
+        let key = Self::team_progress_key(hunt_id, team_id);
+        env.storage().persistent().set(&key, progress);
+        extend_ttl(env, &key, TtlPolicy::Active);
+    }
+
+    /// Returns team progress, defaulting to empty when never written.
+    pub fn get_team_progress(env: &Env, hunt_id: u64, team_id: u32) -> TeamProgress {
+        let key = Self::team_progress_key(hunt_id, team_id);
+        env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| TeamProgress {
+                completed_clues: Vec::new(env),
+                total_score: 0,
+            })
     }
 
     pub fn get_player_addresses_for_hunt(env: &Env, hunt_id: u64) -> Vec<Address> {
@@ -702,7 +1103,7 @@ impl Storage {
             .instance()
             .get::<_, Vec<Address>>(&key)
             .unwrap_or_else(|| Vec::new(env));
-        
+
         // Check if address already exists to avoid duplicates
         if view_only_list.first_index_of(address).is_none() {
             view_only_list.push_back(address.clone());
@@ -723,7 +1124,7 @@ impl Storage {
             .instance()
             .get::<_, Vec<Address>>(&key)
             .unwrap_or_else(|| Vec::new(env));
-        
+
         if let Some(idx) = view_only_list.first_index_of(address) {
             view_only_list.remove(idx);
             env.storage().instance().set(&key, &view_only_list);
@@ -746,7 +1147,7 @@ impl Storage {
             .instance()
             .get::<_, Vec<Address>>(&key)
             .unwrap_or_else(|| Vec::new(env));
-        
+
         view_only_list.first_index_of(address).is_some()
     }
 
@@ -776,7 +1177,7 @@ impl Storage {
             false
         }
     }
-    
+
     /// Sets the contract admin address.
     /// The admin can manage global view-only access.
     ///
@@ -816,44 +1217,99 @@ impl Storage {
     pub fn clear_pending_admin(env: &Env) {
         env.storage().instance().remove(&Self::PENDING_ADMIN_KEY);
     }
-    
+
     // Backward compatibility: general pause
     const PAUSE_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
     pub fn set_paused(env: &Env, paused: bool) {
         env.storage().instance().set(&Self::PAUSE_KEY, &paused);
     }
     pub fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&Self::PAUSE_KEY).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&Self::PAUSE_KEY)
+            .unwrap_or(false)
     }
-    
-    // Blacklist functions for backward compatibility
-    const BLACKLIST_KEY: soroban_sdk::Symbol = symbol_short!("BLACKLIST");
-    pub fn set_blacklisted(env: &Env, address: &Address, blacklisted: bool) {
-        if blacklisted {
-            let mut list = env.storage().instance().get(&Self::BLACKLIST_KEY).unwrap_or_else(|| Vec::new(env));
-            if list.first_index_of(address).is_none() {
-                list.push_back(address.clone());
-                env.storage().instance().set(&Self::BLACKLIST_KEY, &list);
-            }
-        } else {
-            let mut list = env.storage().instance().get(&Self::BLACKLIST_KEY).unwrap_or_else(|| Vec::new(env));
-            if let Some(idx) = list.first_index_of(address) {
-                list.remove(idx);
-                env.storage().instance().set(&Self::BLACKLIST_KEY, &list);
+
+    // ========== Blacklist Storage Functions ==========
+    //
+    // Single canonical representation: one persistent key per address,
+    // stored under (symbol_short!("BLKLST"), address).  All paths
+    // (contract entry-points *and* admin helpers) must go through
+    // `set_blacklisted` / `is_blacklisted` defined here.
+
+    fn blacklist_key(creator: &Address) -> (soroban_sdk::Symbol, Address) {
+        (symbol_short!("BLKLST"), creator.clone())
+    }
+
+    /// Adds `creator` to the blacklist.
+    pub fn blacklist_creator(env: &Env, creator: &Address) {
+        env.storage()
+            .instance()
+            .set(&Self::blacklist_key(creator), &true);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
+    }
+
+    /// Removes `creator` from the blacklist.
+    pub fn remove_from_blacklist(env: &Env, creator: &Address) {
+        env.storage()
+            .instance()
+            .remove(&Self::blacklist_key(creator));
+    }
+
+    /// Returns `true` if `creator` is currently blacklisted.
+    /// This is the single canonical reader used by **both** the public
+    /// `is_blacklisted` query *and* the `create_hunt` enforcement check.
+    pub fn is_blacklisted(env: &Env, creator: &Address) -> bool {
+        env.storage()
+            .instance()
+            .get::<_, bool>(&Self::blacklist_key(creator))
+            .unwrap_or(false)
+    }
+
+    // ========== Emergency-stop helpers ==========
+
+    /// Returns the IDs of every hunt whose current status is [`HuntStatus::Active`].
+    ///
+    /// Iterates all hunt IDs from 1 to the current counter value.
+    /// The instance-storage cache is used when available for an O(1) status
+    /// check per hunt; the method falls back to the full persistent record when
+    /// the cache is cold.
+    pub fn get_active_hunt_ids(env: &Env) -> Vec<u64> {
+        let counter = Self::get_hunt_counter(env);
+        let mut active = Vec::new(env);
+        for hunt_id in 1..=counter {
+            // Prefer the cheap instance-cache path.
+            let status = if let Some(cache) = Self::get_hunt_cache(env, hunt_id) {
+                cache.status
+            } else if let Some(hunt) = Self::get_hunt(env, hunt_id) {
+                hunt.status
+            } else {
+                continue;
+            };
+            if status == crate::types::HuntStatus::Active {
+                active.push_back(hunt_id);
             }
         }
+        active
     }
-    pub fn is_blacklisted(env: &Env, address: &Address) -> bool {
-        let list: Vec<Address> = env.storage().instance().get(&Self::BLACKLIST_KEY).unwrap_or_else(|| Vec::new(env));
-        list.first_index_of(address).is_some()
-    }
-    
-    // Helper functions for emergency stop (placeholder for now)
-    pub fn get_active_hunt_ids(_env: &Env) -> Vec<u64> {
-        Vec::new(_env)
-    }
-    pub fn set_hunt_status(_env: &Env, _hunt_id: u64, _status: crate::types::HuntStatus) {
-        // Placeholder
+
+    /// Updates the status of an existing hunt and persists the change.
+    ///
+    /// Loads the full [`Hunt`] record, sets `hunt.status` to `status`, then
+    /// delegates back to [`Self::save_hunt`], which handles TTL selection and
+    /// keeps the instance-storage cache coherent with the persistent record.
+    ///
+    /// # Panics
+    /// Does **not** panic if the hunt is missing — the call is silently ignored
+    /// so that a bulk operation (e.g. emergency-stop-all) can continue with
+    /// the remaining hunts.
+    pub fn set_hunt_status(env: &Env, hunt_id: u64, status: crate::types::HuntStatus) {
+        if let Some(mut hunt) = Self::get_hunt(env, hunt_id) {
+            hunt.status = status;
+            Self::save_hunt(env, &hunt);
+        }
     }
 
     /// Adds an address to the global view-only list.
@@ -868,11 +1324,13 @@ impl Storage {
             .instance()
             .get::<_, Vec<Address>>(&Self::GLOBAL_VIEW_ONLY_KEY)
             .unwrap_or_else(|| Vec::new(env));
-        
+
         // Check if address already exists to avoid duplicates
         if view_only_list.first_index_of(address).is_none() {
             view_only_list.push_back(address.clone());
-            env.storage().instance().set(&Self::GLOBAL_VIEW_ONLY_KEY, &view_only_list);
+            env.storage()
+                .instance()
+                .set(&Self::GLOBAL_VIEW_ONLY_KEY, &view_only_list);
         }
     }
 
@@ -887,10 +1345,12 @@ impl Storage {
             .instance()
             .get::<_, Vec<Address>>(&Self::GLOBAL_VIEW_ONLY_KEY)
             .unwrap_or_else(|| Vec::new(env));
-        
+
         if let Some(idx) = view_only_list.first_index_of(address) {
             view_only_list.remove(idx);
-            env.storage().instance().set(&Self::GLOBAL_VIEW_ONLY_KEY, &view_only_list);
+            env.storage()
+                .instance()
+                .set(&Self::GLOBAL_VIEW_ONLY_KEY, &view_only_list);
         }
     }
 
@@ -908,7 +1368,7 @@ impl Storage {
             .instance()
             .get::<_, Vec<Address>>(&Self::GLOBAL_VIEW_ONLY_KEY)
             .unwrap_or_else(|| Vec::new(env));
-        
+
         view_only_list.first_index_of(address).is_some()
     }
 
@@ -933,72 +1393,21 @@ impl Storage {
     }
 
     pub fn ban_player(env: &Env, hunt_id: u64, player: &Address) {
-        env.storage().persistent().set(&Self::ban_key(hunt_id, player), &());
+        env.storage()
+            .persistent()
+            .set(&Self::ban_key(hunt_id, player), &());
     }
 
     pub fn unban_player(env: &Env, hunt_id: u64, player: &Address) {
-        env.storage().persistent().remove(&Self::ban_key(hunt_id, player));
+        env.storage()
+            .persistent()
+            .remove(&Self::ban_key(hunt_id, player));
     }
 
     pub fn is_banned(env: &Env, hunt_id: u64, player: &Address) -> bool {
-        env.storage().persistent().has(&Self::ban_key(hunt_id, player))
-    }
-
-    // ========== Admin Storage Functions ==========
-
-    pub fn set_admin(env: &Env, admin: &Address) {
-        env.storage().instance().set(&Self::ADMIN_KEY, admin);
-    }
-
-    pub fn get_admin(env: &Env) -> Option<Address> {
-        env.storage().instance().get(&Self::ADMIN_KEY)
-    }
-
-    // ========== Blacklist Storage Functions ==========
-
-    fn blacklist_key(creator: &Address) -> (soroban_sdk::Symbol, Address) {
-        (symbol_short!("BLKLST"), creator.clone())
-    }
-
-    pub fn blacklist_creator(env: &Env, creator: &Address) {
         env.storage()
-            .instance()
-            .set(&Self::blacklist_key(creator), &true);
-    }
-
-    pub fn remove_from_blacklist(env: &Env, creator: &Address) {
-        env.storage()
-            .instance()
-            .remove(&Self::blacklist_key(creator));
-    }
-
-    pub fn is_blacklisted(env: &Env, creator: &Address) -> bool {
-        env.storage()
-            .instance()
-            .get::<_, bool>(&Self::blacklist_key(creator))
-            .unwrap_or(false)
-    }
-
-    pub fn set_creator_blacklisted(env: &Env, creator: &Address, blacklisted: bool) {
-        let mut blacklist: Map<Address, bool> = env
-            .storage()
-            .instance()
-            .get(&Self::BLACKLIST_KEY)
-            .unwrap_or(Map::new(env));
-        blacklist.set(creator.clone(), blacklisted);
-        env.storage().instance().set(&Self::BLACKLIST_KEY, &blacklist);
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
-    }
-
-    pub fn is_creator_blacklisted(env: &Env, creator: &Address) -> bool {
-        let blacklist: Map<Address, bool> = env
-            .storage()
-            .instance()
-            .get(&Self::BLACKLIST_KEY)
-            .unwrap_or(Map::new(env));
-        blacklist.get(creator.clone()).unwrap_or(false)
+            .persistent()
+            .has(&Self::ban_key(hunt_id, player))
     }
 
     // ========== Hunt creation rate limiting ==========
@@ -1008,7 +1417,9 @@ impl Storage {
     }
 
     pub fn set_rate_limit_admin(env: &Env, admin: &Address) {
-        env.storage().instance().set(&symbol_short!("HRLADM"), admin);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("HRLADM"), admin);
     }
 
     pub fn get_default_hunt_creation_limit(env: &Env) -> u32 {
@@ -1019,7 +1430,9 @@ impl Storage {
     }
 
     pub fn set_default_hunt_creation_limit(env: &Env, limit: u32) {
-        env.storage().instance().set(&symbol_short!("HRLDEF"), &limit);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("HRLDEF"), &limit);
     }
 
     pub fn get_creator_limit_override(env: &Env, creator: &Address) -> Option<u32> {
@@ -1049,5 +1462,41 @@ impl Storage {
     pub fn set_creator_daily_hunt_count(env: &Env, creator: &Address, day: u64, count: u32) {
         let key = Self::creator_daily_count_key(creator, day);
         env.storage().persistent().set(&key, &count);
+    }
+
+    // ========== Co-Creators Storage Functions ==========
+    pub fn get_co_creators(env: &Env, hunt_id: u64) -> Vec<Address> {
+        let key = (symbol_short!("COCRTR"), hunt_id);
+        env.storage()
+            .instance()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env))
+    }
+    pub fn add_co_creator(env: &Env, hunt_id: u64, address: &Address) {
+        let key = (symbol_short!("COCRTR"), hunt_id);
+        let mut list = Self::get_co_creators(env, hunt_id);
+        if list.first_index_of(address).is_none() {
+            list.push_back(address.clone());
+            env.storage().instance().set(&key, &list);
+            env.storage().instance().extend_ttl(518400, 518400);
+        }
+    }
+    pub fn remove_co_creator(env: &Env, hunt_id: u64, address: &Address) {
+        let key = (symbol_short!("COCRTR"), hunt_id);
+        let mut list = Self::get_co_creators(env, hunt_id);
+        if let Some(idx) = list.first_index_of(address) {
+            list.remove(idx);
+            env.storage().instance().set(&key, &list);
+        }
+    }
+    pub fn is_authorized_creator_or_co_creator(env: &Env, hunt_id: u64, caller: &Address) -> bool {
+        if let Some(hunt) = Self::get_hunt(env, hunt_id) {
+            if &hunt.creator == caller {
+                return true;
+            }
+            let co_creators = Self::get_co_creators(env, hunt_id);
+            return co_creators.first_index_of(caller).is_some();
+        }
+        false
     }
 }

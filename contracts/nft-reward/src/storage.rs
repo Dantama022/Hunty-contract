@@ -1,28 +1,41 @@
-use crate::NftData;
-use soroban_sdk::{symbol_short, Address, Env, Vec};
+use crate::{CollectionMetadata, NftCore, NftData, NftMetadata};
+use soroban_sdk::{symbol_short, Address, Env, String, Symbol, Vec};
 
 /// Storage layer for NFTs.
 pub struct Storage;
 
+#[allow(dead_code)]
 impl Storage {
     // Shortened storage prefixes for nft-reward
     const NFT_KEY: soroban_sdk::Symbol = symbol_short!("NF");
+    const NFT_CORE_KEY: soroban_sdk::Symbol = symbol_short!("NC");
+    const NFT_META_KEY: soroban_sdk::Symbol = symbol_short!("NM");
     const NFT_COUNTER_KEY: soroban_sdk::Symbol = symbol_short!("CN");
     const OWNER_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("ONFC");
-    const HUNT_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("HN");
-    const MAX_SUPPLY_KEY: soroban_sdk::Symbol = symbol_short!("MA");
-    const INITIALIZED_KEY: soroban_sdk::Symbol = symbol_short!("I");
-    const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("A");
-    const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MN");
-    const REWARD_MGR_KEY: soroban_sdk::Symbol = symbol_short!("R");
-    const NFT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("NV");
+    const MAX_SUPPLY_KEY: soroban_sdk::Symbol = symbol_short!("MAXS");
+    const INITIALIZED_KEY: soroban_sdk::Symbol = symbol_short!("INIT");
+    const COLLECTION_METADATA_KEY: soroban_sdk::Symbol = symbol_short!("COLL");
+    const ADMIN_KEY: soroban_sdk::Symbol = symbol_short!("ADMIN");
+    const MINTER_KEY: soroban_sdk::Symbol = symbol_short!("MNTR");
+    const REWARD_MGR_KEY: soroban_sdk::Symbol = symbol_short!("RWDMGR");
+    const HAS_AUTH_KEY: soroban_sdk::Symbol = symbol_short!("HAUTH");
+    const HUNT_NFT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("HNFC");
     const TOTAL_HUNTS_KEY: soroban_sdk::Symbol = symbol_short!("TH");
     const TOTAL_OWNERS_KEY: soroban_sdk::Symbol = symbol_short!("TO");
-    const ALL_NFTS_KEY: soroban_sdk::Symbol = symbol_short!("AN");
-    const CONTRACT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("CV");
+    const ALL_NFTS_KEY: soroban_sdk::Symbol = symbol_short!("ALLNFT");
+    const NFT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("NFTV");
+    const CONTRACT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("CTRV");
 
     fn nft_key(nft_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::NFT_KEY, nft_id)
+    }
+
+    fn nft_core_key(nft_id: u64) -> (soroban_sdk::Symbol, u64) {
+        (Self::NFT_CORE_KEY, nft_id)
+    }
+
+    fn nft_metadata_key(nft_id: u64) -> (soroban_sdk::Symbol, u64) {
+        (Self::NFT_META_KEY, nft_id)
     }
 
     fn nft_version_key(nft_id: u64) -> (soroban_sdk::Symbol, u64) {
@@ -68,6 +81,15 @@ impl Storage {
         (symbol_short!("LOCKR"), locker.clone())
     }
 
+    fn authorized_contract_key(contract: &Address) -> (soroban_sdk::Symbol, Address) {
+        (symbol_short!("AUTH"), contract.clone())
+    }
+
+    pub fn is_initialized(env: &Env) -> bool {
+        env.storage().instance().has(&Self::INITIALIZED_KEY)
+            || env.storage().persistent().has(&Self::INITIALIZED_KEY)
+    }
+
     pub fn save_admin(env: &Env, admin: &Address) {
         env.storage().instance().set(&Self::ADMIN_KEY, admin);
     }
@@ -75,6 +97,8 @@ impl Storage {
     pub fn get_admin(env: &Env) -> Option<Address> {
         env.storage().instance().get(&Self::ADMIN_KEY)
     }
+
+    // --- Reward Manager ---
 
     pub fn set_reward_manager(env: &Env, address: &Address) {
         env.storage().instance().set(&Self::REWARD_MGR_KEY, address);
@@ -86,6 +110,17 @@ impl Storage {
 
     pub fn get_reward_manager(env: &Env) -> Option<Address> {
         env.storage().instance().get(&Self::REWARD_MGR_KEY)
+    }
+
+    pub fn get_max_supply(env: &Env) -> Option<u64> {
+        // Check instance storage first, then fall back to persistent storage.
+        if let Some(v) = env.storage().instance().get(&Self::MAX_SUPPLY_KEY) {
+            return Some(v);
+        }
+        env.storage()
+            .persistent()
+            .get::<_, Option<u64>>(&Self::MAX_SUPPLY_KEY)
+            .unwrap_or(None)
     }
 
     // --- Minter whitelist (reserved for admin-gated minting) ---
@@ -108,9 +143,49 @@ impl Storage {
         env.storage().persistent().get(&key).unwrap_or(false)
     }
 
+    // --- Authorized cross-contract callers ---
+
+    pub fn has_authorized_contracts(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&Self::HAS_AUTH_KEY)
+            .unwrap_or(false)
+    }
+
+    pub fn add_authorized_contract(env: &Env, contract: &Address) {
+        let key = Self::authorized_contract_key(contract);
+        env.storage().persistent().set(&key, &true);
+        env.storage().instance().set(&Self::HAS_AUTH_KEY, &true);
+    }
+
+    pub fn remove_authorized_contract(env: &Env, contract: &Address) {
+        let key = Self::authorized_contract_key(contract);
+        env.storage().persistent().remove(&key);
+    }
+
+    pub fn is_authorized_contract(env: &Env, contract: &Address) -> bool {
+        let key = Self::authorized_contract_key(contract);
+        env.storage().persistent().get(&key).unwrap_or(false)
+    }
+
     pub fn save_nft(env: &Env, nft: &NftData) {
-        let key = Self::nft_key(nft.nft_id);
-        env.storage().persistent().set(&key, nft);
+        let core = NftCore {
+            nft_id: nft.nft_id,
+            hunt_id: nft.hunt_id,
+            owner: nft.owner.clone(),
+            completion_player: nft.completion_player.clone(),
+            transferable: nft.transferable,
+            minted_at: nft.minted_at,
+            locked: nft.locked,
+        };
+        let core_key = Self::nft_core_key(nft.nft_id);
+        env.storage().persistent().set(&core_key, &core);
+
+        let meta_key = Self::nft_metadata_key(nft.nft_id);
+        let existing_meta: Option<NftMetadata> = env.storage().persistent().get(&meta_key);
+        if existing_meta.as_ref() != Some(&nft.metadata) {
+            env.storage().persistent().set(&meta_key, &nft.metadata);
+        }
 
         // Also add to all NFTs list for iteration (only if not already present)
         let mut all_nfts = env
@@ -122,13 +197,57 @@ impl Storage {
         // Check if NFT ID already exists to avoid duplicates
         if all_nfts.first_index_of(nft.nft_id).is_none() {
             all_nfts.push_back(nft.nft_id);
-            env.storage().persistent().set(&Self::ALL_NFTS_KEY, &all_nfts);
+            env.storage()
+                .persistent()
+                .set(&Self::ALL_NFTS_KEY, &all_nfts);
         }
     }
 
     pub fn get_nft(env: &Env, nft_id: u64) -> Option<NftData> {
-        let key = Self::nft_key(nft_id);
-        env.storage().persistent().get(&key)
+        let core_key = Self::nft_core_key(nft_id);
+        let core: Option<NftCore> = env.storage().persistent().get(&core_key);
+
+        let meta_key = Self::nft_metadata_key(nft_id);
+        let meta: Option<NftMetadata> = env.storage().persistent().get(&meta_key);
+
+        if let (Some(c), Some(m)) = (core, meta) {
+            Some(NftData {
+                nft_id: c.nft_id,
+                hunt_id: c.hunt_id,
+                owner: c.owner,
+                completion_player: c.completion_player,
+                metadata: m,
+                transferable: c.transferable,
+                minted_at: c.minted_at,
+                locked: c.locked,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn remove_nft(env: &Env, nft_id: u64) {
+        let core_key = Self::nft_core_key(nft_id);
+        env.storage().persistent().remove(&core_key);
+
+        let meta_key = Self::nft_metadata_key(nft_id);
+        env.storage().persistent().remove(&meta_key);
+
+        let version_key = Self::nft_version_key(nft_id);
+        env.storage().persistent().remove(&version_key);
+
+        // Also remove from ALL_NFTS_KEY list
+        let mut all_nfts = env
+            .storage()
+            .persistent()
+            .get(&Self::ALL_NFTS_KEY)
+            .unwrap_or_else(|| Vec::new(env));
+        if let Some(idx) = all_nfts.first_index_of(nft_id) {
+            all_nfts.remove(idx);
+            env.storage()
+                .persistent()
+                .set(&Self::ALL_NFTS_KEY, &all_nfts);
+        }
     }
 
     pub fn set_nft_version(env: &Env, nft_id: u64, version: u32) {
@@ -217,23 +336,32 @@ impl Storage {
         env.storage()
             .persistent()
             .set(&Self::MAX_SUPPLY_KEY, &max_supply);
+    }
+
+    /// Marks the contract as initialized. Called once during `initialize()`.
+    pub fn mark_initialized(env: &Env) {
         env.storage()
             .persistent()
             .set(&Self::INITIALIZED_KEY, &true);
     }
 
-    pub fn get_max_supply(env: &Env) -> Option<u64> {
+    /// Adds an NFT ID to the owner's index.
+    /// Each entry is stored at its own key so no single entry grows unboundedly.
+    pub fn save_collection_metadata(env: &Env, metadata: &CollectionMetadata) {
         env.storage()
-            .persistent()
-            .get::<_, Option<u64>>(&Self::MAX_SUPPLY_KEY)
-            .flatten()
+            .instance()
+            .set(&Self::COLLECTION_METADATA_KEY, metadata);
     }
 
-    pub fn is_initialized(env: &Env) -> bool {
-        env.storage()
-            .persistent()
-            .get(&Self::INITIALIZED_KEY)
-            .unwrap_or(false)
+    pub fn get_collection_metadata(env: &Env) -> Option<CollectionMetadata> {
+        env.storage().instance().get(&Self::COLLECTION_METADATA_KEY)
+    }
+
+    pub fn update_collection_metadata_total_supply(env: &Env, total_supply: u64) {
+        if let Some(mut metadata) = Self::get_collection_metadata(env) {
+            metadata.total_supply = total_supply;
+            Self::save_collection_metadata(env, &metadata);
+        }
     }
 
     pub fn add_nft_to_owner(env: &Env, owner: &Address, nft_id: u64) {
@@ -325,6 +453,53 @@ impl Storage {
                     }
                     env.storage().persistent().set(&count_key, &(count - 1));
                     env.storage().persistent().remove(&exist_key);
+                    return;
+                }
+            }
+        }
+    }
+
+    pub fn remove_nft_from_owner(env: &Env, owner: &Address, nft_id: u64) {
+        let count_key = Self::owner_nft_count_key(owner);
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        let exist_key = Self::owner_nft_exist_key(owner, nft_id);
+        if !env.storage().persistent().has(&exist_key) {
+            return;
+        }
+
+        for i in 0..count {
+            let entry_key = Self::owner_nft_entry_key(owner, i);
+            if let Some(stored_id) = env.storage().persistent().get::<_, u64>(&entry_key) {
+                if stored_id == nft_id {
+                    let last_idx = count - 1;
+                    if i != last_idx {
+                        let last_key = Self::owner_nft_entry_key(owner, last_idx);
+                        if let Some(last_id) =
+                            env.storage().persistent().get::<_, u64>(&last_key)
+                        {
+                            env.storage().persistent().set(&entry_key, &last_id);
+                        }
+                        env.storage().persistent().remove(&last_key);
+                    } else {
+                        env.storage().persistent().remove(&entry_key);
+                    }
+                    env.storage().persistent().set(&count_key, &(count - 1));
+                    env.storage().persistent().remove(&exist_key);
+
+                    // Decrement total owners if owner's count drops to 0
+                    if count == 1 {
+                        let current_total: u64 = env
+                            .storage()
+                            .persistent()
+                            .get(&Self::TOTAL_OWNERS_KEY)
+                            .unwrap_or(0);
+                        if current_total > 0 {
+                            env
+                                .storage()
+                                .persistent()
+                                .set(&Self::TOTAL_OWNERS_KEY, &(current_total - 1));
+                        }
+                    }
                     return;
                 }
             }

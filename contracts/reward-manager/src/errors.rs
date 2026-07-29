@@ -39,4 +39,66 @@ pub enum RewardErrorCode {
 
     /// Replay attack detected: distribution nonce state inconsistency.
     ReplayDetected = 16,
+
+    /// Pool balance would exceed maximum allowed limit.
+    PoolBalanceOverflow = 17,
+
+    /// Funding amount is below the minimum threshold (dust attack prevention).
+    BelowMinimumFunding = 18,
+
+    /// Single funding amount exceeds the maximum allowed.
+    ExceedsMaximumFunding = 19,
+
+    /// Daily distribution cap for a specific pool has been exceeded.
+    DailyCapExceeded = 20,
+
+    /// Global daily distribution cap across all pools has been exceeded.
+    GlobalDailyCapExceeded = 21,
+
+    /// Contract is paused and cannot perform this operation.
+    ContractPaused = 22,
+
+    /// No pending failed NFT mint found for retry.
+    NftMintPendingNotFound = 23,
+
+    /// No distribution record exists for the given hunt/player.
+    DistributionNotFound = 24,
+
+    /// The source pool is not eligible for migration: its hunt is neither
+    /// expired nor cancelled.
+    SourcePoolNotEligible = 25,
+
+    /// The destination pool does not exist (must be created first).
+    DestinationPoolNotFound = 26,
+
+    /// Source and destination refer to the same hunt, or there is no balance
+    /// to migrate.
+    InvalidMigration = 27,
+
+    /// Pool is frozen and distributions have been temporarily disabled.
+    PoolFrozen = 28,
+
+    /// Distribution rate limit not yet elapsed (cooldown period active).
+    DistributionRateLimited = 29,
+
+    /// Batch size exceeds maximum allowed limit.
+    BatchTooLarge = 30,
+
+    /// Invalid score value provided.
+    InvalidScore = 31,
+
+    /// Token contract validation failed.
+    InvalidTokenContract = 32,
+
+    /// No vesting record exists for the given hunt/player pair.
+    VestingNotStarted = 33,
+
+    /// Player has already claimed the full vested amount.
+    VestingAlreadyClaimed = 34,
+
+    /// Nothing has vested yet (elapsed time is zero or vesting just started).
+    NothingToVest = 35,
+
+    /// The pool does not have vesting configured (vesting_period_secs == 0).
+    VestingNotConfigured = 36,
 }

@@ -6,19 +6,19 @@
 /// - RewardManager calls NftReward.mint
 /// - Verify state consistency across contracts
 /// - Test error propagation between contracts
-
 use hunty_core::HuntyCore;
 use nft_reward::NftReward;
 use reward_manager::RewardManager;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{token, Address, Env, String};
 
-fn setup_environment(env: &Env) -> (Address, Address, Address, Address) {
+fn setup_environment(env: &Env) -> (Address, Address, Address, Address, Address) {
     let core_id = env.register(HuntyCore, ());
     let reward_manager_id = env.register(RewardManager, ());
     let nft_reward_id = env.register(NftReward, ());
     let token_admin = Address::generate(env);
-    
+    let admin = Address::generate(env);
+
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
     let token_address = token_contract.address();
 
@@ -30,11 +30,23 @@ fn setup_environment(env: &Env) -> (Address, Address, Address, Address) {
 
     // Initialize NftReward with RewardManager as authorized minter
     env.as_contract(&nft_reward_id, || {
-        NftReward::initialize_admin(env.clone(), Address::generate(env)).unwrap();
-        NftReward::set_reward_manager(env.clone(), reward_manager_id.clone()).unwrap();
+        NftReward::initialize_admin(env.clone(), admin.clone()).unwrap();
+        NftReward::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone())
+            .unwrap();
     });
 
-    (core_id, reward_manager_id, nft_reward_id, token_address)
+    // Initialize HuntyCore admin
+    env.as_contract(&core_id, || {
+        HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
+    });
+
+    (
+        core_id,
+        reward_manager_id,
+        nft_reward_id,
+        token_address,
+        admin,
+    )
 }
 
 fn as_core_contract<T>(env: &Env, contract_id: &Address, f: impl FnOnce(&Env) -> T) -> T {
@@ -42,7 +54,7 @@ fn as_core_contract<T>(env: &Env, contract_id: &Address, f: impl FnOnce(&Env) ->
 }
 
 // ============================================================================
-// Tests for HuntyCore → RewardManager → NftReward Interaction
+// Tests for HuntyCore â†’ RewardManager â†’ NftReward Interaction
 // ============================================================================
 
 #[test]
@@ -53,8 +65,9 @@ fn test_hunty_core_calls_reward_manager_for_xlm_distribution() {
 
     let creator = Address::generate(&env);
     let player = Address::generate(&env);
-    
-    let (core_id, reward_manager_id, _nft_reward_id, token_address) = setup_environment(&env);
+
+    let (core_id, reward_manager_id, _nft_reward_id, token_address, admin) =
+        setup_environment(&env);
 
     // Setup token and fund reward manager
     let sac = token::StellarAssetClient::new(&env, &token_address);
@@ -100,7 +113,7 @@ fn test_hunty_core_calls_reward_manager_for_xlm_distribution() {
         HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
 
         // Set reward manager
-        HuntyCore::set_reward_manager(env.clone(), reward_manager_id.clone());
+        HuntyCore::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone());
 
         hunt_id
     });
@@ -164,8 +177,8 @@ fn test_reward_manager_calls_nft_reward_for_minting() {
 
     let creator = Address::generate(&env);
     let player = Address::generate(&env);
-    
-    let (core_id, reward_manager_id, nft_reward_id, token_address) = setup_environment(&env);
+
+    let (core_id, reward_manager_id, nft_reward_id, token_address, admin) = setup_environment(&env);
 
     // Setup token
     let sac = token::StellarAssetClient::new(&env, &token_address);
@@ -201,13 +214,13 @@ fn test_reward_manager_calls_nft_reward_for_minting() {
             hunt_id,
             100,
             1000,
-            true,  // nft_enabled
+            true, // nft_enabled
             Some(nft_reward_id.clone()),
         )
         .unwrap();
 
         HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
-        HuntyCore::set_reward_manager(env.clone(), reward_manager_id.clone());
+        HuntyCore::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone());
 
         hunt_id
     });
@@ -230,7 +243,10 @@ fn test_reward_manager_calls_nft_reward_for_minting() {
         HuntyCore::complete_hunt(env.clone(), hunt_id, player.clone())
     });
 
-    assert!(result.is_ok(), "Hunt completion should succeed and mint NFT");
+    assert!(
+        result.is_ok(),
+        "Hunt completion should succeed and mint NFT"
+    );
 
     // Verify NFT was minted
     env.as_contract(&nft_reward_id, || {
@@ -258,8 +274,8 @@ fn test_xlm_and_nft_reward_distribution_combined() {
 
     let creator = Address::generate(&env);
     let player = Address::generate(&env);
-    
-    let (core_id, reward_manager_id, nft_reward_id, token_address) = setup_environment(&env);
+
+    let (core_id, reward_manager_id, nft_reward_id, token_address, admin) = setup_environment(&env);
 
     // Setup token
     let sac = token::StellarAssetClient::new(&env, &token_address);
@@ -301,7 +317,7 @@ fn test_xlm_and_nft_reward_distribution_combined() {
         .unwrap();
 
         HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
-        HuntyCore::set_reward_manager(env.clone(), reward_manager_id.clone());
+        HuntyCore::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone());
 
         hunt_id
     });
@@ -357,8 +373,8 @@ fn test_state_consistency_across_contracts_after_distribution() {
 
     let creator = Address::generate(&env);
     let player = Address::generate(&env);
-    
-    let (core_id, reward_manager_id, nft_reward_id, token_address) = setup_environment(&env);
+
+    let (core_id, reward_manager_id, nft_reward_id, token_address, admin) = setup_environment(&env);
 
     let sac = token::StellarAssetClient::new(&env, &token_address);
     sac.mint(&reward_manager_id, &50_000);
@@ -397,7 +413,7 @@ fn test_state_consistency_across_contracts_after_distribution() {
         .unwrap();
 
         HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
-        HuntyCore::set_reward_manager(env.clone(), reward_manager_id.clone());
+        HuntyCore::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone());
 
         hunt_id
     });
@@ -474,8 +490,9 @@ fn test_error_propagation_insufficient_pool_balance() {
 
     let creator = Address::generate(&env);
     let player = Address::generate(&env);
-    
-    let (core_id, reward_manager_id, _nft_reward_id, token_address) = setup_environment(&env);
+
+    let (core_id, reward_manager_id, _nft_reward_id, token_address, admin) =
+        setup_environment(&env);
 
     let sac = token::StellarAssetClient::new(&env, &token_address);
     // Fund with insufficient amount
@@ -505,18 +522,10 @@ fn test_error_propagation_insufficient_pool_balance() {
         .unwrap();
 
         // Request 5000 XLM reward pool
-        HuntyCore::set_reward_config(
-            env.clone(),
-            hunt_id,
-            10,
-            5000,
-            false,
-            None,
-        )
-        .unwrap();
+        HuntyCore::set_reward_config(env.clone(), hunt_id, 10, 5000, false, None).unwrap();
 
         HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
-        HuntyCore::set_reward_manager(env.clone(), reward_manager_id.clone());
+        HuntyCore::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone());
 
         hunt_id
     });
@@ -559,8 +568,9 @@ fn test_error_propagation_invalid_nft_config() {
 
     let creator = Address::generate(&env);
     let player = Address::generate(&env);
-    
-    let (core_id, reward_manager_id, _nft_reward_id, token_address) = setup_environment(&env);
+
+    let (core_id, reward_manager_id, _nft_reward_id, token_address, admin) =
+        setup_environment(&env);
 
     let sac = token::StellarAssetClient::new(&env, &token_address);
     sac.mint(&reward_manager_id, &50_000);
@@ -596,12 +606,12 @@ fn test_error_propagation_invalid_nft_config() {
             10,
             1000,
             true,
-            None,  // No NFT contract provided
+            None, // No NFT contract provided
         )
         .unwrap();
 
         HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
-        HuntyCore::set_reward_manager(env.clone(), reward_manager_id.clone());
+        HuntyCore::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone());
 
         hunt_id
     });
@@ -642,8 +652,8 @@ fn test_reward_already_claimed_prevents_double_distribution() {
 
     let creator = Address::generate(&env);
     let player = Address::generate(&env);
-    
-    let (core_id, reward_manager_id, nft_reward_id, token_address) = setup_environment(&env);
+
+    let (core_id, reward_manager_id, nft_reward_id, token_address, admin) = setup_environment(&env);
 
     let sac = token::StellarAssetClient::new(&env, &token_address);
     sac.mint(&reward_manager_id, &50_000);
@@ -682,7 +692,7 @@ fn test_reward_already_claimed_prevents_double_distribution() {
         .unwrap();
 
         HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
-        HuntyCore::set_reward_manager(env.clone(), reward_manager_id.clone());
+        HuntyCore::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone());
 
         hunt_id
     });
@@ -736,8 +746,8 @@ fn test_multiple_players_rewards_consistency() {
     let player1 = Address::generate(&env);
     let player2 = Address::generate(&env);
     let player3 = Address::generate(&env);
-    
-    let (core_id, reward_manager_id, nft_reward_id, token_address) = setup_environment(&env);
+
+    let (core_id, reward_manager_id, nft_reward_id, token_address, admin) = setup_environment(&env);
 
     let sac = token::StellarAssetClient::new(&env, &token_address);
     sac.mint(&reward_manager_id, &100_000);
@@ -776,7 +786,7 @@ fn test_multiple_players_rewards_consistency() {
         .unwrap();
 
         HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
-        HuntyCore::set_reward_manager(env.clone(), reward_manager_id.clone());
+        HuntyCore::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone());
 
         hunt_id
     });
@@ -834,9 +844,18 @@ fn test_multiple_players_rewards_consistency() {
     let balance2 = token_client.balance(&player2);
     let balance3 = token_client.balance(&player3);
 
-    assert_eq!(balance1, rewards_per_player, "Player 1 should receive reward");
-    assert_eq!(balance2, rewards_per_player, "Player 2 should receive reward");
-    assert_eq!(balance3, rewards_per_player, "Player 3 should receive reward");
+    assert_eq!(
+        balance1, rewards_per_player,
+        "Player 1 should receive reward"
+    );
+    assert_eq!(
+        balance2, rewards_per_player,
+        "Player 2 should receive reward"
+    );
+    assert_eq!(
+        balance3, rewards_per_player,
+        "Player 3 should receive reward"
+    );
 
     // Verify pool is depleted
     let pool_balance = env.as_contract(&reward_manager_id, |env| {
@@ -863,12 +882,12 @@ fn test_cross_contract_call_failure_recovery() {
 
     let creator = Address::generate(&env);
     let player = Address::generate(&env);
-    
+
     // Setup without NFT reward to cause failure
     let core_id = env.register(HuntyCore, ());
     let reward_manager_id = env.register(RewardManager, ());
     let token_admin = Address::generate(&env);
-    
+
     let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
     let token_address = token_contract.address();
 
@@ -911,13 +930,13 @@ fn test_cross_contract_call_failure_recovery() {
             hunt_id,
             10,
             1000,
-            false,  // NFT disabled
+            false, // NFT disabled
             None,
         )
         .unwrap();
 
         HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
-        HuntyCore::set_reward_manager(env.clone(), reward_manager_id.clone());
+        HuntyCore::set_reward_manager(env.clone(), admin.clone(), reward_manager_id.clone());
 
         hunt_id
     });

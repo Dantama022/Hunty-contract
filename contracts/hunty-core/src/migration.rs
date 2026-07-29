@@ -100,11 +100,21 @@ impl HuntyCoreMigration {
                     }
                     current = 1;
                 }
-                1 => {
+                // v1 -> v2: not yet implemented.
+                // Add the arm here (and the migrate_v1_to_v2 fn below) once
+                // the new storage layout is defined. Until then the `_ =>`
+                // catchall correctly refuses to bump the version counter.
+                2 => {
                     if !dry_run {
-                        Self::migrate_v1_to_v2(env);
+                        Self::migrate_v2_to_v3(env);
                     }
-                    current = 2;
+                    current = 3;
+                }
+                3 => {
+                    if !dry_run {
+                        Self::migrate_v3_to_v4(env);
+                    }
+                    current = 4;
                 }
                 _ => {
                     return Ok(MigrationFramework::build_report(
@@ -198,6 +208,60 @@ impl HuntyCoreMigration {
         }
     }
 
-    /// v1 -> v2: placeholder for future layout changes (no-op for now).
-    fn migrate_v1_to_v2(_env: &Env) {}
+    // v1 -> v2: NOT YET IMPLEMENTED.
+    // Define migrate_v1_to_v2(env: &Env) here and add the corresponding
+    // `1 => { ... current = 2; }` arm to run_migration once the new
+    // storage layout and transformation logic are ready.
+    // Until then this step intentionally does not exist so run_migration
+    // rejects any attempt to target version 2 (or higher) rather than
+    // silently bumping the stored schema counter without touching any data.
+
+    /// v2 -> v3: populate required clue IDs list for on-demand clue loading.
+    /// Iterates all hunts and saves the list of required clue IDs in separate storage,
+    /// so that `check_all_required_clues_completed` can verify completion without
+    /// loading full clue data.
+    fn migrate_v2_to_v3(env: &Env) {
+        use soroban_sdk::Vec;
+        let hunt_count = Storage::get_hunt_counter(env);
+        for hunt_id in 1..=hunt_count {
+            if Storage::get_hunt(env, hunt_id).is_none() {
+                continue;
+            }
+            let clue_count = Storage::get_clue_counter(env, hunt_id);
+            if clue_count == 0 {
+                continue;
+            }
+            let all_clues = Storage::list_clues_for_hunt(env, hunt_id, 0, clue_count);
+            let mut required_ids: Vec<u32> = Vec::new(env);
+            for i in 0..all_clues.len() {
+                let clue = all_clues.get(i).unwrap();
+                if clue.is_required {
+                    required_ids.push_back(clue.clue_id);
+                }
+            }
+            // Only save if there are required clues to avoid unnecessary storage writes
+            if required_ids.len() > 0 {
+                Storage::set_required_clues(env, hunt_id, &required_ids);
+            }
+        }
+    }
+
+    /// v3 -> v4: add weight field to existing clues (default to 1).
+    fn migrate_v3_to_v4(env: &Env) {
+        let hunt_count = Storage::get_hunt_counter(env);
+        for hunt_id in 1..=hunt_count {
+            if Storage::get_hunt(env, hunt_id).is_none() {
+                continue;
+            }
+            let clue_count = Storage::get_clue_counter(env, hunt_id);
+            if clue_count == 0 {
+                continue;
+            }
+            let all_clues = Storage::list_clues_for_hunt(env, hunt_id, 0, clue_count);
+            for i in 0..all_clues.len() {
+                let clue = all_clues.get(i).unwrap();
+                Storage::save_clue(env, hunt_id, &clue);
+            }
+        }
+    }
 }

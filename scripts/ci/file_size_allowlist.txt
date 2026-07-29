@@ -1,0 +1,5 @@
+# Tracked files permitted to exceed MAX_FILE_BYTES (~1 MiB).
+# Only grandfathered historical blobs — do not add new binaries here
+# without an explicit maintainer decision.
+rustup-init2.exe
+vs_BuildTools.exe

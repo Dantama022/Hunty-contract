@@ -21,7 +21,10 @@ Complete every item in order. Sign off with your name/date at the bottom before 
   ```
 - [ ] WASM hashes recorded and match what is checked into `docs/deployment/manifest.txt`:
   ```
+  # Linux:
   sha256sum target/wasm32v1-none/release/*.wasm
+  # macOS:
+  shasum -a 256 target/wasm32v1-none/release/*.wasm
   ```
 
 ## 3. Testnet Smoke Test

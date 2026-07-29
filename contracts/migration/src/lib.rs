@@ -2,7 +2,7 @@
 use soroban_sdk::{contracterror, contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 /// Current schema version for Hunty contract storage layouts.
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 pub const VERSION_KEY: Symbol = symbol_short!("SCHEMA");
 pub const ROLLBACK_KEY: Symbol = symbol_short!("RBKVER");
@@ -124,9 +124,7 @@ pub struct UpgradeAuthorization;
 
 impl UpgradeAuthorization {
     pub fn set_upgrade_admin(env: &Env, admin: &Address) {
-        env.storage()
-            .instance()
-            .set(&UPGRADE_ADMIN_KEY, admin);
+        env.storage().instance().set(&UPGRADE_ADMIN_KEY, admin);
     }
 
     pub fn get_upgrade_admin(env: &Env) -> Option<Address> {
@@ -197,11 +195,7 @@ impl UpgradeAuthorization {
     }
 
     pub fn record_execution(env: &Env, entry: &UpgradeHistoryEntry) {
-        let count: u32 = env
-            .storage()
-            .persistent()
-            .get(&HIST_COUNT_KEY)
-            .unwrap_or(0);
+        let count: u32 = env.storage().persistent().get(&HIST_COUNT_KEY).unwrap_or(0);
         let key = (symbol_short!("UPHIS"), count);
         env.storage().persistent().set(&key, entry);
         env.storage()
@@ -210,11 +204,7 @@ impl UpgradeAuthorization {
     }
 
     pub fn get_history(env: &Env, offset: u32, limit: u32) -> Vec<UpgradeHistoryEntry> {
-        let count: u32 = env
-            .storage()
-            .persistent()
-            .get(&HIST_COUNT_KEY)
-            .unwrap_or(0);
+        let count: u32 = env.storage().persistent().get(&HIST_COUNT_KEY).unwrap_or(0);
         if offset >= count {
             return Vec::new(env);
         }
@@ -230,10 +220,7 @@ impl UpgradeAuthorization {
     }
 
     pub fn history_count(env: &Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get(&HIST_COUNT_KEY)
-            .unwrap_or(0)
+        env.storage().persistent().get(&HIST_COUNT_KEY).unwrap_or(0)
     }
 
     pub fn prepare_migration_run(
