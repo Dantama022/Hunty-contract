@@ -1,5 +1,4 @@
-use core::fmt;
-use soroban_sdk::{contracterror, String};
+use soroban_sdk::contracterror;
 
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -51,116 +50,68 @@ pub enum HuntErrorCode {
     InvalidCategory = 44,
     InvalidDifficulty = 45,
     CorruptPlayerProgress = 46,
-    HuntNotStarted = 46,
+    HuntNotStarted = 47,
+    AdminAlreadyProposed = 48,
 }
 
 #[derive(Debug)]
 pub enum HuntError {
-    HuntNotFound {
-        hunt_id: u64,
-    },
-    ClueNotFound {
-        hunt_id: u64,
-    },
+    HuntNotFound,
+    ClueNotFound,
     InvalidHuntStatus,
-    PlayerNotRegistered {
-        hunt_id: u64,
-    },
-    ClueAlreadyCompleted {
-        hunt_id: u64,
-    },
+    PlayerNotRegistered,
+    ClueAlreadyCompleted,
     InvalidAnswer,
-    HuntNotActive {
-        hunt_id: u64,
-    },
+    HuntNotActive,
     Unauthorized,
-    InsufficientRewardPool {
-        required: i128,
-        available: i128,
-    },
-    DuplicateRegistration {
-        hunt_id: u64,
-    },
-    InvalidTitle {
-        reason: String,
-    },
-    InvalidDescription {
-        reason: String,
-    },
+    InsufficientRewardPool,
+    DuplicateRegistration,
+    InvalidTitle,
+    InvalidDescription,
     InvalidAddress,
-    TooManyClues {
-        hunt_id: u64,
-        limit: u32,
-    },
+    TooManyClues,
     InvalidQuestion,
-    HuntNotCompleted {
-        hunt_id: u64,
-    },
-    RewardAlreadyClaimed {
-        hunt_id: u64,
-    },
-    RewardDistributionFailed {
-        hunt_id: u64,
-    },
-    NoRewardsConfigured {
-        hunt_id: u64,
-    },
-    DuplicateSubmission {
-        hunt_id: u64,
-        clue_id: u32,
-    },
-    SubmissionExpired {
-        submitted_at: u64,
-        current_time: u64,
-    },
-    BannedPlayer {
-        hunt_id: u64,
-        player: soroban_sdk::Address,
-    },
-    NoRequiredClues {
-        hunt_id: u64,
-    },
-    RateLimitExceeded {
-        cooldown_remaining: u64,
-    },
+    RefundFailed,
+    NoCluesAdded,
+    HuntNotCompleted,
+    RewardAlreadyClaimed,
+    RewardDistributionFailed,
+    NoRewardsConfigured,
+    DuplicateSubmission,
+    SubmissionExpired,
+    BannedPlayer,
+    NoRequiredClues,
+    RateLimitExceeded,
     ScoreOverflow,
     RegistrationsPaused,
     AnswersPaused,
     RewardsPaused,
-    HuntEndTimeInPast {
-        end_time: u64,
-        current_time: u64,
-    },
+    HuntEndTimeInPast,
     NoPendingAdmin,
-    PendingAdminMismatch {
-        expected: soroban_sdk::Address,
-        actual: soroban_sdk::Address,
-    },
-    AdminAlreadyProposed {
-        pending: soroban_sdk::Address,
-    },
-    InvalidRarity {
-        value: u32,
-    },
+    PendingAdminMismatch,
+    AdminAlreadyProposed,
+    InvalidRarity,
     InvalidTimeBonusConfig,
     AddressBlacklisted,
     ContractPaused,
-    InvalidWeight {
-        value: u32,
-    },
+    InvalidMaxAttempts,
+    InvalidWeight,
     HintNotAvailable,
     HintAlreadyUnlocked,
     InsufficientScore,
-    TooManyCategories {
-        limit: u32,
-    },
+    TooManyCategories,
     InvalidCategory,
+    InvalidDifficulty,
+    CorruptPlayerProgress,
+    HuntNotStarted,
+    AttemptCooldownNotExpired,
     InvalidDifficulty {
         value: u32,
     },
     CorruptPlayerProgress {
         hunt_id: u64,
         player: soroban_sdk::Address,
+    },
     HuntNotStarted {
         start_time: u64,
         current_time: u64,
@@ -333,7 +284,12 @@ impl fmt::Display for HuntError {
                 write!(f, "Invalid difficulty value: {}", value)
             }
             HuntError::CorruptPlayerProgress { hunt_id, player } => {
-                write!(f, "Corrupt player progress record for hunt {} player {:?}", hunt_id, player)
+                write!(
+                    f,
+                    "Corrupt player progress record for hunt {} player {:?}",
+                    hunt_id, player
+                )
+            }
             HuntError::HuntNotStarted {
                 start_time,
                 current_time,
@@ -351,51 +307,58 @@ impl fmt::Display for HuntError {
 impl From<HuntError> for HuntErrorCode {
     fn from(err: HuntError) -> Self {
         match err {
-            HuntError::HuntNotFound { .. } => HuntErrorCode::HuntNotFound,
-            HuntError::ClueNotFound { .. } => HuntErrorCode::ClueNotFound,
+            HuntError::HuntNotFound => HuntErrorCode::HuntNotFound,
+            HuntError::ClueNotFound => HuntErrorCode::ClueNotFound,
             HuntError::InvalidHuntStatus => HuntErrorCode::InvalidHuntStatus,
-            HuntError::PlayerNotRegistered { .. } => HuntErrorCode::PlayerNotRegistered,
-            HuntError::ClueAlreadyCompleted { .. } => HuntErrorCode::ClueAlreadyCompleted,
+            HuntError::PlayerNotRegistered => HuntErrorCode::PlayerNotRegistered,
+            HuntError::ClueAlreadyCompleted => HuntErrorCode::ClueAlreadyCompleted,
             HuntError::InvalidAnswer => HuntErrorCode::InvalidAnswer,
-            HuntError::HuntNotActive { .. } => HuntErrorCode::HuntNotActive,
+            HuntError::HuntNotActive => HuntErrorCode::HuntNotActive,
             HuntError::Unauthorized => HuntErrorCode::Unauthorized,
-            HuntError::InsufficientRewardPool { .. } => HuntErrorCode::InsufficientRewardPool,
-            HuntError::DuplicateRegistration { .. } => HuntErrorCode::DuplicateRegistration,
-            HuntError::InvalidTitle { .. } => HuntErrorCode::InvalidTitle,
-            HuntError::InvalidDescription { .. } => HuntErrorCode::InvalidDescription,
+            HuntError::InsufficientRewardPool => HuntErrorCode::InsufficientRewardPool,
+            HuntError::DuplicateRegistration => HuntErrorCode::DuplicateRegistration,
+            HuntError::InvalidTitle => HuntErrorCode::InvalidTitle,
+            HuntError::InvalidDescription => HuntErrorCode::InvalidDescription,
             HuntError::InvalidAddress => HuntErrorCode::InvalidAddress,
-            HuntError::TooManyClues { .. } => HuntErrorCode::TooManyClues,
+            HuntError::TooManyClues => HuntErrorCode::TooManyClues,
             HuntError::InvalidQuestion => HuntErrorCode::InvalidQuestion,
-            HuntError::HuntNotCompleted { .. } => HuntErrorCode::HuntNotCompleted,
-            HuntError::RewardAlreadyClaimed { .. } => HuntErrorCode::RewardAlreadyClaimed,
-            HuntError::RewardDistributionFailed { .. } => HuntErrorCode::RewardDistributionFailed,
-            HuntError::NoRewardsConfigured { .. } => HuntErrorCode::NoRewardsConfigured,
-            HuntError::DuplicateSubmission { .. } => HuntErrorCode::DuplicateSubmission,
-            HuntError::SubmissionExpired { .. } => HuntErrorCode::SubmissionExpired,
-            HuntError::BannedPlayer { .. } => HuntErrorCode::BannedPlayer,
-            HuntError::NoRequiredClues { .. } => HuntErrorCode::NoRequiredClues,
-            HuntError::RateLimitExceeded { .. } => HuntErrorCode::RateLimitExceeded,
+            HuntError::RefundFailed => HuntErrorCode::RefundFailed,
+            HuntError::NoCluesAdded => HuntErrorCode::NoCluesAdded,
+            HuntError::HuntNotCompleted => HuntErrorCode::HuntNotCompleted,
+            HuntError::RewardAlreadyClaimed => HuntErrorCode::RewardAlreadyClaimed,
+            HuntError::RewardDistributionFailed => HuntErrorCode::RewardDistributionFailed,
+            HuntError::NoRewardsConfigured => HuntErrorCode::NoRewardsConfigured,
+            HuntError::DuplicateSubmission => HuntErrorCode::DuplicateSubmission,
+            HuntError::SubmissionExpired => HuntErrorCode::SubmissionExpired,
+            HuntError::BannedPlayer => HuntErrorCode::BannedPlayer,
+            HuntError::NoRequiredClues => HuntErrorCode::NoRequiredClues,
+            HuntError::RateLimitExceeded => HuntErrorCode::RateLimitExceeded,
             HuntError::ScoreOverflow => HuntErrorCode::ScoreOverflow,
             HuntError::RegistrationsPaused => HuntErrorCode::RegistrationsPaused,
             HuntError::AnswersPaused => HuntErrorCode::AnswersPaused,
             HuntError::RewardsPaused => HuntErrorCode::RewardsPaused,
-            HuntError::HuntEndTimeInPast { .. } => HuntErrorCode::HuntEndTimeInPast,
+            HuntError::HuntEndTimeInPast => HuntErrorCode::HuntEndTimeInPast,
             HuntError::NoPendingAdmin => HuntErrorCode::NoPendingAdmin,
+            HuntError::PendingAdminMismatch => HuntErrorCode::PendingAdminMismatch,
+            HuntError::AdminAlreadyProposed => HuntErrorCode::Unauthorized,
+            HuntError::InvalidRarity => HuntErrorCode::InvalidRarity,
             HuntError::PendingAdminMismatch { .. } => HuntErrorCode::PendingAdminMismatch,
-            HuntError::AdminAlreadyProposed { .. } => HuntErrorCode::Unauthorized,
+            HuntError::AdminAlreadyProposed { .. } => HuntErrorCode::AdminAlreadyProposed,
             HuntError::InvalidRarity { .. } => HuntErrorCode::InvalidRarity,
             HuntError::InvalidTimeBonusConfig => HuntErrorCode::InvalidTimeBonusConfig,
             HuntError::AddressBlacklisted => HuntErrorCode::AddressBlacklisted,
             HuntError::ContractPaused => HuntErrorCode::ContractPaused,
-            HuntError::InvalidWeight { .. } => HuntErrorCode::InvalidWeight,
+            HuntError::InvalidMaxAttempts => HuntErrorCode::InvalidMaxAttempts,
+            HuntError::InvalidWeight => HuntErrorCode::InvalidWeight,
             HuntError::HintNotAvailable => HuntErrorCode::HintNotAvailable,
             HuntError::HintAlreadyUnlocked => HuntErrorCode::HintAlreadyUnlocked,
             HuntError::InsufficientScore => HuntErrorCode::InsufficientScore,
-            HuntError::TooManyCategories { .. } => HuntErrorCode::TooManyCategories,
+            HuntError::TooManyCategories => HuntErrorCode::TooManyCategories,
             HuntError::InvalidCategory => HuntErrorCode::InvalidCategory,
-            HuntError::InvalidDifficulty { .. } => HuntErrorCode::InvalidDifficulty,
-            HuntError::CorruptPlayerProgress { .. } => HuntErrorCode::CorruptPlayerProgress,
-            HuntError::HuntNotStarted { .. } => HuntErrorCode::HuntNotStarted,
+            HuntError::InvalidDifficulty => HuntErrorCode::InvalidDifficulty,
+            HuntError::CorruptPlayerProgress => HuntErrorCode::CorruptPlayerProgress,
+            HuntError::HuntNotStarted => HuntErrorCode::HuntNotStarted,
+            HuntError::AttemptCooldownNotExpired => HuntErrorCode::RateLimitExceeded,
         }
     }
 }

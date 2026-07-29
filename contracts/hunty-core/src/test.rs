@@ -28,7 +28,7 @@ mod test {
     use crate::types::{
         ClueAddedEvent, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent,
         HuntClosedEvent, HuntCompletedEvent, HuntCreatedEvent, HuntStatus, HuntStatusChangedEvent,
-        PlayerRegisteredEvent, RewardClaimFailedEvent, TimeBonusConfig,
+        LeaderboardResult, PlayerRegisteredEvent, RewardClaimFailedEvent, TimeBonusConfig,
     };
     use crate::HuntyCore;
     use nft_reward::NftReward;
@@ -114,7 +114,7 @@ mod test {
 
     #[test]
     fn test_error_with_context_display() {
-        let err = HuntError::HuntNotFound { hunt_id: 42 };
+        let err = HuntError::HuntNotFound;
         let hunt_error: HuntErrorCode = err.into();
         assert_eq!(hunt_error, HuntErrorCode::HuntNotFound)
     }
@@ -173,16 +173,34 @@ mod test {
     }
 
     #[test]
-    fn test_hunt_not_found_message() {
-        let err = HuntError::HuntNotFound { hunt_id: 42 };
-
-        assert_eq!(err.to_string(), "Hunt not found: ID 42");
+    fn test_hunt_not_found_converts_to_code() {
+        let err = HuntError::HuntNotFound;
+        let code: HuntErrorCode = err.into();
+        assert_eq!(code, HuntErrorCode::HuntNotFound);
     }
 
     #[test]
-    fn test_clue_not_found_message() {
-        let err = HuntError::ClueNotFound { hunt_id: 10 };
-        assert_eq!(err.to_string(), "Clue not found for hunt 10");
+    fn test_issue_686_error_variants_convert_to_codes() {
+        let cases = [
+            (HuntError::RefundFailed, HuntErrorCode::RefundFailed),
+            (HuntError::NoCluesAdded, HuntErrorCode::NoCluesAdded),
+            (
+                HuntError::InvalidMaxAttempts,
+                HuntErrorCode::InvalidMaxAttempts,
+            ),
+        ];
+
+        for (error, expected_code) in cases {
+            let code: HuntErrorCode = error.into();
+            assert_eq!(code, expected_code);
+        }
+    }
+
+    #[test]
+    fn test_clue_not_found_converts_to_code() {
+        let err = HuntError::ClueNotFound;
+        let code: HuntErrorCode = err.into();
+        assert_eq!(code, HuntErrorCode::ClueNotFound);
     }
 
     #[test]
@@ -319,7 +337,7 @@ mod test {
             .unwrap();
         });
         let board1 = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap().entries
         });
         let first = board1.get(0).unwrap();
         assert_eq!(first.player, player1);
@@ -333,7 +351,7 @@ mod test {
             .unwrap();
         });
         let board2 = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap().entries
         });
         let first_after_second = board2.get(0).unwrap();
         let second_after_second = board2.get(1).unwrap();
@@ -358,7 +376,7 @@ mod test {
         });
         assert_eq!(dup_result, Err(HuntErrorCode::DuplicateSubmission));
         let board_dup = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap().entries
         });
         let first_after_dup = board_dup.get(0).unwrap();
         let second_after_dup = board_dup.get(1).unwrap();
@@ -655,16 +673,10 @@ mod test {
     }
 
     #[test]
-    fn test_insufficient_reward_pool_message() {
-        let err = HuntError::InsufficientRewardPool {
-            required: 10000,
-            available: 500,
-        };
-
-        assert_eq!(
-            err.to_string(),
-            "Insufficient reward pool: required 10000, available 500"
-        );
+    fn test_insufficient_reward_pool_converts_to_code() {
+        let err = HuntError::InsufficientRewardPool;
+        let code: HuntErrorCode = err.into();
+        assert_eq!(code, HuntErrorCode::InsufficientRewardPool);
     }
 
     // ========== create_hunt() Tests ==========
@@ -809,7 +821,7 @@ mod test {
         assert_eq!(slow_progress.total_score, 10);
 
         let board = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 3, 0).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 3, 0).unwrap().entries
         });
 
         assert_eq!(board.len(), 3);
@@ -4564,7 +4576,7 @@ mod test {
             .unwrap();
             HuntyCore::add_clue(env.clone(), hunt_id, question, answer, 1, true, 1).unwrap();
             HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 0).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 0).unwrap().entries
         });
 
         assert_eq!(board.len(), 0);
@@ -4660,7 +4672,7 @@ mod test {
                 .unwrap();
         });
         let board = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 0).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 0).unwrap().entries
         });
 
         let e1 = board.get(0).unwrap();
@@ -4739,7 +4751,7 @@ mod test {
             }
         });
         let board = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 2).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 2).unwrap().entries
         });
 
         assert_eq!(board.len(), 2);
@@ -4819,7 +4831,7 @@ mod test {
 
         // offset=0 returns full board
         let page1 = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 0).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 0).unwrap().entries
         });
         assert_eq!(page1.len(), 3);
         assert_eq!(page1.get(0).unwrap().player, player_a);
@@ -4827,7 +4839,7 @@ mod test {
 
         // offset=1 skips rank 1, returns b(2) and c(3)
         let page2 = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 1).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 1).unwrap().entries
         });
         assert_eq!(page2.len(), 2);
         assert_eq!(page2.get(0).unwrap().player, player_b);
@@ -4837,7 +4849,7 @@ mod test {
 
         // offset=2 returns only c(3)
         let page3 = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 2).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 2).unwrap().entries
         });
         assert_eq!(page3.len(), 1);
         assert_eq!(page3.get(0).unwrap().player, player_c);
@@ -4845,7 +4857,7 @@ mod test {
 
         // offset beyond all entries returns empty
         let empty = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 100).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10, 100).unwrap().entries
         });
         assert_eq!(empty.len(), 0);
     }
@@ -4909,7 +4921,7 @@ mod test {
         });
 
         let board = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap().entries
         });
 
         let first = board.get(0).unwrap();
@@ -4966,7 +4978,7 @@ mod test {
         });
 
         let board = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap().entries
         });
 
         assert_eq!(board.len(), 1);
@@ -5033,7 +5045,7 @@ mod test {
         });
 
         let board = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap().entries
         });
 
         assert_eq!(board.len(), 1);
@@ -5100,7 +5112,7 @@ mod test {
 
         let initial_board = as_core_contract(&env, &contract_id, |env| {
             HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, crate::MAX_LEADERBOARD_SIZE)
-                .unwrap()
+                .unwrap().entries
         });
         assert_eq!(initial_board.len(), crate::MAX_LEADERBOARD_SIZE);
 
@@ -5115,7 +5127,7 @@ mod test {
 
         let board = as_core_contract(&env, &contract_id, |env| {
             HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, crate::MAX_LEADERBOARD_SIZE)
-                .unwrap()
+                .unwrap().entries
         });
         assert_eq!(board.len(), crate::MAX_LEADERBOARD_SIZE);
         assert_eq!(board.get(0).unwrap().player, promoted_player);
@@ -5174,7 +5186,7 @@ mod test {
 
         // Get leaderboard and verify it's correctly sorted
         let board = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, crate::MAX_LEADERBOARD_SIZE).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, crate::MAX_LEADERBOARD_SIZE).unwrap().entries
         });
 
         // Verify we have up to MAX_LEADERBOARD_SIZE entries
@@ -5193,6 +5205,117 @@ mod test {
                 last_completed_at = entry.completed_at;
             }
         }
+    }
+
+    /// Issue #688: leaderboard result signals truncation when players exceed index capacity.
+    #[test]
+    fn test_get_hunt_leaderboard_signals_truncation() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+
+        let creator = Address::generate(&env);
+        let question = String::from_str(&env, "Q");
+        let answer = String::from_str(&env, "a");
+
+        let contract_id = env.register(HuntyCore, ());
+        let hunt_id = as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Truncation Hunt"),
+                String::from_str(env, "Desc"),
+                None,
+                None,
+                0,
+                None,
+            )
+            .unwrap()
+        });
+        env.mock_all_auths();
+        as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::add_clue(env.clone(), hunt_id, question.clone(), answer.clone(), 10, true, None)
+                .unwrap();
+            HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
+        });
+
+        // Register more players than the leaderboard index can hold
+        let mut players = Vec::new(&env);
+        for i in 0..crate::MAX_LEADERBOARD_SIZE + 5 {
+            let player = Address::generate(&env);
+            players.push_back(player.clone());
+            env.mock_all_auths();
+            as_core_contract(&env, &contract_id, |env| {
+                HuntyCore::register_player(env.clone(), hunt_id, player.clone()).unwrap();
+            });
+            // Give each player a unique score so they all enter the index
+            env.ledger().set_timestamp(1_700_000_000 + i as u64 + 1);
+            env.mock_all_auths();
+            as_core_contract(&env, &contract_id, |env| {
+                submit_answer(env, hunt_id, 1, player, answer.clone(), i as u64 + 1).unwrap();
+            });
+        }
+
+        let result = as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, crate::MAX_LEADERBOARD_SIZE).unwrap()
+        });
+
+        assert_eq!(result.entries.len(), crate::MAX_LEADERBOARD_SIZE);
+        assert!(result.truncated);
+        assert_eq!(result.total_players, crate::MAX_LEADERBOARD_SIZE + 5);
+    }
+
+    /// Issue #688: leaderboard result is not truncated when all players fit in the index.
+    #[test]
+    fn test_get_hunt_leaderboard_not_truncated_when_small() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+
+        let creator = Address::generate(&env);
+        let question = String::from_str(&env, "Q");
+        let answer = String::from_str(&env, "a");
+
+        let contract_id = env.register(HuntyCore, ());
+        let hunt_id = as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Small Hunt"),
+                String::from_str(env, "Desc"),
+                None,
+                None,
+                0,
+                None,
+            )
+            .unwrap()
+        });
+        env.mock_all_auths();
+        as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::add_clue(env.clone(), hunt_id, question.clone(), answer.clone(), 10, true, None)
+                .unwrap();
+            HuntyCore::activate_hunt(env.clone(), hunt_id, creator.clone()).unwrap();
+        });
+
+        // Register only 3 players
+        for i in 0..3 {
+            let player = Address::generate(&env);
+            env.mock_all_auths();
+            as_core_contract(&env, &contract_id, |env| {
+                HuntyCore::register_player(env.clone(), hunt_id, player.clone()).unwrap();
+            });
+            env.ledger().set_timestamp(1_700_000_000 + i as u64 + 1);
+            env.mock_all_auths();
+            as_core_contract(&env, &contract_id, |env| {
+                submit_answer(env, hunt_id, 1, player, answer.clone(), i as u64 + 1).unwrap();
+            });
+        }
+
+        let result = as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap()
+        });
+
+        assert_eq!(result.entries.len(), 3);
+        assert!(!result.truncated);
+        assert_eq!(result.total_players, 3);
     }
 
     /// Test that leaderboard works correctly with pagination (even though the function doesn't have explicit pagination, verify that it returns the correct top N)
@@ -5246,13 +5369,13 @@ mod test {
 
         // Get leaderboard with limit 5
         let board_5 = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 5).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 5).unwrap().entries
         });
         assert_eq!(board_5.len(), 5);
 
         // Get leaderboard with limit 10
         let board_10 = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap()
+            HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap().entries
         });
         assert_eq!(board_10.len(), 10);
 
@@ -7404,7 +7527,7 @@ mod test {
                 assert_eq!(progress.player, *player);
                 assert!(!progress.is_completed);
             }
-            let leaderboard = HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 100).unwrap();
+            let leaderboard = HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 100).unwrap().entries;
             assert_eq!(leaderboard.len(), num_players);
         });
     }
@@ -7539,7 +7662,7 @@ mod test {
 
         // Verify leaderboard ordering and max winners
         as_core_contract(&env, &contract_id, |env| {
-            let leaderboard = HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap();
+            let leaderboard = HuntyCore::get_hunt_leaderboard(env.clone(), hunt_id, 10).unwrap().entries;
             assert_eq!(leaderboard.len(), num_players);
             // First 3 players should have rank 1-3
             for i in 0..3 {
@@ -7619,6 +7742,70 @@ mod test {
         });
     }
 
+    // ========== Admin Security Tests ==========
+
+    #[test]
+    fn test_admin_initialization_flow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let contract_id = env.register_contract(None, HuntyCore);
+
+        // First initialization succeeds
+        as_core_contract(&env, &contract_id, |env| {
+            assert!(HuntyCore::initialize_admin(env.clone(), admin1.clone()).is_ok());
+        });
+
+        // Second initialization fails
+        as_core_contract(&env, &contract_id, |env| {
+            let res = HuntyCore::initialize_admin(env.clone(), admin2.clone());
+            assert_eq!(res, Err(HuntErrorCode::Unauthorized));
+        });
+    }
+
+    #[test]
+    fn test_admin_rotation_flow() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let admin3 = Address::generate(&env);
+        let contract_id = env.register_contract(None, HuntyCore);
+
+        as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::initialize_admin(env.clone(), admin1.clone()).unwrap();
+        });
+
+        // Unauthorized user cannot propose
+        as_core_contract(&env, &contract_id, |env| {
+            let res = HuntyCore::propose_new_admin(env.clone(), admin2.clone(), admin3.clone());
+            assert_eq!(res, Err(HuntErrorCode::Unauthorized));
+        });
+
+        // Admin1 proposes Admin2
+        as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::propose_new_admin(env.clone(), admin1.clone(), admin2.clone()).unwrap();
+        });
+
+        // Admin3 cannot accept
+        as_core_contract(&env, &contract_id, |env| {
+            let res = HuntyCore::accept_admin(env.clone(), admin3.clone());
+            assert_eq!(res, Err(HuntErrorCode::PendingAdminMismatch));
+        });
+
+        // Admin2 accepts
+        as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::accept_admin(env.clone(), admin2.clone()).unwrap();
+        });
+
+        // Admin1 can no longer propose
+        as_core_contract(&env, &contract_id, |env| {
+            let res = HuntyCore::propose_new_admin(env.clone(), admin1.clone(), admin3.clone());
+            assert_eq!(res, Err(HuntErrorCode::Unauthorized));
+        });
+    }
+
     // ========== Blacklist Tests ==========
 
     #[test]
@@ -7630,7 +7817,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), admin.clone(), creator.clone()).unwrap();
@@ -7650,7 +7837,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), admin.clone(), creator.clone()).unwrap();
@@ -7673,7 +7860,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), admin.clone(), creator.clone()).unwrap();
@@ -7701,7 +7888,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), admin.clone(), creator.clone()).unwrap();
@@ -7729,7 +7916,7 @@ mod test {
         let contract_id = env.register_contract(None, HuntyCore);
 
         as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::set_admin(env.clone(), admin.clone());
+            HuntyCore::initialize_admin(env.clone(), admin.clone()).unwrap();
         });
         let result = as_core_contract(&env, &contract_id, |env| {
             HuntyCore::blacklist_creator(env.clone(), not_admin.clone(), creator.clone())
@@ -7926,9 +8113,8 @@ mod test {
         let result = Storage::try_get_player_progress(&env, hunt_id, &player);
         assert!(result.is_err());
         match result {
-            Err(HuntError::CorruptPlayerProgress { hunt_id: err_hunt_id, player: err_player }) => {
-                assert_eq!(err_hunt_id, hunt_id);
-                assert_eq!(err_player, player);
+            Err(HuntError::CorruptPlayerProgress) => {
+                // Payloads stripped; variant still maps to CorruptPlayerProgress
             }
             _ => panic!("Expected CorruptPlayerProgress error"),
         }

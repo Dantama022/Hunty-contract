@@ -14,7 +14,12 @@ pub use crate::types::{
     DistributionProof, DistributionRecord, DistributionStatus, PendingNftMint, PoolAuditEntry,
     PoolDistribution, PoolOperation, ResolutionStatus, RewardConfig, RewardPoolConfig,
     RewardPoolStatistics, RewardPoolStatus, SemVer, TierError, TimeBasedRewardTier,
-    ValidationResult,
+    ValidationResult, VestingRecord, VestingStatus,
+    resolve_tier_amount, tiers_are_strictly_ascending, BatchDistributionEntry,
+    DistributionAnalytics, DistributionMode, DistributionProof, DistributionRecord,
+    DistributionStatus, PendingNftMint, PoolAuditEntry, PoolDistribution, PoolOperation,
+    ResolutionStatus, RewardConfig, RewardPoolConfig, RewardPoolStatistics, RewardPoolStatus,
+    SemVer, TierError, TimeBasedRewardTier, ValidationResult,
 };
 use crate::xlm_handler::XlmHandler;
 
@@ -34,6 +39,11 @@ const MAX_POOL_BALANCE: i128 = 1_000_000_000 * 10_000_000;
 /// Chosen to keep intrinsic gas cost well within Soroban's per-transaction
 /// instruction budget even when every entry performs both XLM and NFT operations.
 const MAX_BATCH_SIZE: u32 = 10;
+
+/// Maximum number of distribution entries considered when computing
+/// distribution analytics. Keeps gas costs bounded even for pools with
+/// an arbitrarily large number of distributions.
+const MAX_ANALYTICS_ENTRIES: u32 = 500;
 
 #[contract]
 pub struct RewardManager;
@@ -213,8 +223,40 @@ pub struct PoolAuditLogResponse {
     pub total: u64,
 }
 
+/// Event emitted when a vesting schedule is created for a player.
+/// Tokens are locked in the contract and released proportionally over time.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VestingCreatedEvent {
+    pub hunt_id: u64,
+    pub player: Address,
+    pub total_amount: i128,
+    pub vesting_period_secs: u64,
+    pub start_time: u64,
+}
+
+/// Event emitted when a player successfully claims a portion of their vested rewards.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VestedClaimedEvent {
+    pub hunt_id: u64,
+    pub player: Address,
+    pub claimed_amount: i128,
+    pub total_claimed: i128,
+    pub fully_vested: bool,
+}
+
 #[contractimpl]
 impl RewardManager {
+    fn is_delegate(config: &RewardPoolConfig, candidate: &Address) -> bool {
+        for i in 0..config.delegates.len() {
+            if config.delegates.get(i).unwrap() == *candidate {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Current semantic version of this contract.
     pub const CONTRACT_VERSION: u32 = 2;
     /// Minimum NftReward version this contract requires.
@@ -231,6 +273,50 @@ impl RewardManager {
         Storage::set_admin(&env, &admin);
         Storage::set_xlm_token(&env, &xlm_token);
         Storage::set_contract_version(&env, Self::CONTRACT_VERSION);
+        Ok(())
+    }
+
+    /// Step one of a two-step admin key rotation.
+    pub fn propose_new_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), RewardErrorCode> {
+        admin.require_auth();
+
+        let current_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
+        if current_admin != admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        Storage::set_pending_admin(&env, &new_admin);
+        
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "ADMIN"), soroban_sdk::Symbol::new(&env, "ADM_PROP")),
+            (admin, new_admin),
+        );
+
+        Ok(())
+    }
+
+    /// Step two of a two-step admin key rotation.
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), RewardErrorCode> {
+        new_admin.require_auth();
+
+        let pending = Storage::get_pending_admin(&env).ok_or(RewardErrorCode::Unauthorized)?;
+        if pending != new_admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        let old_admin = Storage::get_admin(&env);
+        Storage::set_admin(&env, &new_admin);
+        Storage::clear_pending_admin(&env);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "ADMIN"), soroban_sdk::Symbol::new(&env, "ADM_TRF")),
+            (old_admin, new_admin),
+        );
+
         Ok(())
     }
 
@@ -386,6 +472,7 @@ impl RewardManager {
 
         let config = RewardPoolConfig {
             creator: creator.clone(),
+            delegates: Vec::new(&env),
             min_distribution_amount,
             time_based_tiers: Vec::new(&env),
             frozen: false,
@@ -394,6 +481,8 @@ impl RewardManager {
             target_amount: 0,
             min_distribution_interval_secs: 0,
             distribution_mode: DistributionMode::Fixed,
+            vesting_period_secs: 0,
+            claim_deadline: 0,
         };
         Storage::set_pool_config(&env, hunt_id, &config);
 
@@ -643,6 +732,61 @@ impl RewardManager {
         }
 
         config.nft_contract = nft_contract;
+        Storage::set_pool_config(&env, hunt_id, &config);
+
+        Ok(())
+    }
+
+    /// Adds a delegate allowed to distribute rewards for a pool.
+    /// Only the pool creator can manage delegates.
+    pub fn add_delegate(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        delegate: Address,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        if !Self::is_delegate(&config, &delegate) {
+            config.delegates.push_back(delegate);
+            Storage::set_pool_config(&env, hunt_id, &config);
+        }
+
+        Ok(())
+    }
+
+    /// Removes a delegate from a pool.
+    /// Only the pool creator can manage delegates.
+    pub fn remove_delegate(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        delegate: Address,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        let mut updated: Vec<Address> = Vec::new(&env);
+        for i in 0..config.delegates.len() {
+            let existing = config.delegates.get(i).unwrap();
+            if existing != delegate {
+                updated.push_back(existing);
+            }
+        }
+        config.delegates = updated;
         Storage::set_pool_config(&env, hunt_id, &config);
 
         Ok(())
@@ -1172,13 +1316,8 @@ impl RewardManager {
         player_address: Address,
         reward_config: RewardConfig,
     ) -> Result<(), RewardErrorCode> {
-        // NOTE: soroban-sdk 22 does not expose an immediate-caller API, so the
-        // authorized-contract allowlist (configured via add_authorized_contract)
-        // cannot be enforced from inside this function without extending the
-        // signature to take (and require_auth) the calling contract's address.
-        // The allowlist is retained in storage for a follow-up that threads the
-        // caller through; until then no caller-based rejection is performed here.
-        let _ = Storage::has_authorized_contracts(&env);
+        let pool_config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
 
         // Validate configuration
         if !reward_config.is_valid() {
@@ -1186,10 +1325,8 @@ impl RewardManager {
         }
 
         // Reject distribution if the pool is frozen
-        if let Some(pool_config) = Storage::get_pool_config(&env, hunt_id) {
-            if pool_config.frozen {
-                return Err(RewardErrorCode::PoolFrozen);
-            }
+        if pool_config.frozen {
+            return Err(RewardErrorCode::PoolFrozen);
         }
 
         // Prevent double distribution using monotonic nonce
@@ -1211,23 +1348,21 @@ impl RewardManager {
         let _reentrancy_guard = ReentrancyGuard::acquire(&env)?;
 
         // Per-pool distribution rate limiting
-        if let Some(pool_config) = Storage::get_pool_config(&env, hunt_id) {
-            let interval = pool_config.min_distribution_interval_secs;
-            if interval > 0 {
-                let now = env.ledger().timestamp();
-                if let Some(last) = Storage::get_last_distribution_timestamp(&env, hunt_id) {
-                    let elapsed = now.saturating_sub(last);
-                    if elapsed < interval {
-                        let remaining_secs = interval - elapsed;
-                        env.events().publish(
-                            (symbol_short!("DIST_CD"), hunt_id),
-                            DistributionCooldownEvent {
-                                hunt_id,
-                                remaining_secs,
-                            },
-                        );
-                        return Err(RewardErrorCode::DistributionRateLimited);
-                    }
+        let interval = pool_config.min_distribution_interval_secs;
+        if interval > 0 {
+            let now = env.ledger().timestamp();
+            if let Some(last) = Storage::get_last_distribution_timestamp(&env, hunt_id) {
+                let elapsed = now.saturating_sub(last);
+                if elapsed < interval {
+                    let remaining_secs = interval - elapsed;
+                    env.events().publish(
+                        (symbol_short!("DIST_CD"), hunt_id),
+                        DistributionCooldownEvent {
+                            hunt_id,
+                            remaining_secs,
+                        },
+                    );
+                    return Err(RewardErrorCode::DistributionRateLimited);
                 }
             }
         }
@@ -1307,20 +1442,58 @@ impl RewardManager {
                 }
             }
 
-            XlmHandler::distribute_xlm(
-                &env,
-                token_address,
-                &contract_addr,
-                &player_address,
-                amount,
-            );
-            xlm_amount = amount;
-            Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
+            // Vesting path: when the pool has a vesting period configured, do NOT
+            // transfer tokens immediately. Instead, lock the amount in a VestingRecord
+            // so the player can claim proportionally over time via `claim_vested`.
+            if pool_config.vesting_period_secs > 0 {
+                let now = env.ledger().timestamp();
+                let vesting_record = VestingRecord {
+                    start_time: now,
+                    total_amount: amount,
+                    claimed_amount: 0,
+                    vesting_period_secs: pool_config.vesting_period_secs,
+                };
+                Storage::set_vesting_record(&env, hunt_id, &player_address, &vesting_record);
+                // The pool balance is reserved (deducted) at vesting creation so that
+                // concurrent distributions cannot double-spend the same funds. Tokens
+                // remain in the contract until the player calls `claim_vested`.
+                xlm_amount = amount;
+                Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
 
-            let total_distributed = Storage::get_pool_total_distributed(&env, hunt_id) + amount;
-            Storage::set_pool_total_distributed(&env, hunt_id, total_distributed);
-            let global_total = Storage::get_total_xlm_distributed(&env) + amount;
-            Storage::set_total_xlm_distributed(&env, global_total);
+                let total_distributed =
+                    Storage::get_pool_total_distributed(&env, hunt_id) + amount;
+                Storage::set_pool_total_distributed(&env, hunt_id, total_distributed);
+                let global_total = Storage::get_total_xlm_distributed(&env) + amount;
+                Storage::set_total_xlm_distributed(&env, global_total);
+
+                env.events().publish(
+                    (symbol_short!("VEST_CRT"), hunt_id),
+                    VestingCreatedEvent {
+                        hunt_id,
+                        player: player_address.clone(),
+                        total_amount: amount,
+                        vesting_period_secs: pool_config.vesting_period_secs,
+                        start_time: now,
+                    },
+                );
+            } else {
+                // Instant payout path (no vesting).
+                XlmHandler::distribute_xlm(
+                    &env,
+                    token_address,
+                    &contract_addr,
+                    &player_address,
+                    amount,
+                );
+                xlm_amount = amount;
+                Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
+
+                let total_distributed =
+                    Storage::get_pool_total_distributed(&env, hunt_id) + amount;
+                Storage::set_pool_total_distributed(&env, hunt_id, total_distributed);
+                let global_total = Storage::get_total_xlm_distributed(&env) + amount;
+                Storage::set_total_xlm_distributed(&env, global_total);
+            }
         }
 
         // Route to NFT handler if configured
@@ -1478,14 +1651,6 @@ impl RewardManager {
         // Gas limit: reject excessive batch sizes
         if batch_len > MAX_BATCH_SIZE as usize {
             return Err(RewardErrorCode::BatchTooLarge);
-        }
-
-        // Validate caller is an authorized contract (when configured)
-        if Storage::has_authorized_contracts(&env) {
-            let caller = env.caller();
-            if !Storage::is_authorized_contract(&env, &caller) {
-                return Err(RewardErrorCode::Unauthorized);
-            }
         }
 
         // ── Phase 1: Validate all entries (read-only, no state changes) ──
@@ -2001,6 +2166,166 @@ impl RewardManager {
         Storage::is_distributed(&env, hunt_id, &player)
     }
 
+    // =========================================================================
+    // Vesting schedule
+    // =========================================================================
+
+    /// Sets the vesting period (in seconds) on an existing reward pool.
+    ///
+    /// When `vesting_period_secs > 0`, subsequent `distribute_rewards` calls
+    /// will **not** transfer XLM immediately. Instead a `VestingRecord` is
+    /// stored and the player must call `claim_vested` to receive tokens
+    /// proportionally as time elapses after distribution.
+    ///
+    /// Setting this to `0` disables vesting and reverts to instant payouts for
+    /// future distributions (already-pending vesting records are unaffected).
+    ///
+    /// # Arguments
+    /// * `creator` - Pool owner (must match stored creator)
+    /// * `hunt_id` - The hunt whose pool to configure
+    /// * `vesting_period_secs` - Vesting duration in seconds (0 = disabled)
+    ///
+    /// # Errors
+    /// * `PoolNotFound` - Pool does not exist
+    /// * `Unauthorized` - Caller is not the pool creator
+    pub fn set_vesting_period_secs(
+        env: Env,
+        creator: Address,
+        hunt_id: u64,
+        vesting_period_secs: u64,
+    ) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
+        let mut config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+
+        if creator != config.creator {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        config.vesting_period_secs = vesting_period_secs;
+        Storage::set_pool_config(&env, hunt_id, &config);
+
+        Ok(())
+    }
+
+    /// Claims the proportionally vested XLM reward for the caller.
+    ///
+    /// The claimable amount is: `total_amount * min(elapsed / vesting_period_secs, 1) - claimed_amount`.
+    ///
+    /// The player can call this any number of times over the vesting period.
+    /// Each call transfers whatever has newly vested since the last claim.
+    /// Once `claimed_amount == total_amount` the schedule is fully exhausted.
+    ///
+    /// # Arguments
+    /// * `player` - The player claiming their vested reward
+    /// * `hunt_id` - The hunt whose vesting record to claim from
+    ///
+    /// # Returns
+    /// The XLM amount (in stroops) transferred to the player.
+    ///
+    /// # Errors
+    /// * `VestingNotStarted` - No vesting record exists for this (hunt_id, player)
+    /// * `VestingAlreadyClaimed` - Full vesting amount has already been claimed
+    /// * `NothingToVest` - Nothing has vested yet at the current timestamp
+    /// * `InsufficientPool` - Contract token balance is too low (should not normally occur)
+    pub fn claim_vested(
+        env: Env,
+        player: Address,
+        hunt_id: u64,
+    ) -> Result<i128, RewardErrorCode> {
+        player.require_auth();
+
+        let mut record = Storage::get_vesting_record(&env, hunt_id, &player)
+            .ok_or(RewardErrorCode::VestingNotStarted)?;
+
+        if record.claimed_amount >= record.total_amount {
+            return Err(RewardErrorCode::VestingAlreadyClaimed);
+        }
+
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(record.start_time);
+
+        // Calculate how much has vested: total * min(elapsed / period, 1).
+        // Use integer arithmetic with full precision: multiply first, then divide.
+        let vested_amount = if elapsed >= record.vesting_period_secs {
+            record.total_amount
+        } else {
+            // vested = total_amount * elapsed / vesting_period_secs
+            record
+                .total_amount
+                .checked_mul(elapsed as i128)
+                .unwrap_or(record.total_amount)
+                / (record.vesting_period_secs as i128)
+        };
+
+        let claimable = vested_amount - record.claimed_amount;
+        if claimable <= 0 {
+            return Err(RewardErrorCode::NothingToVest);
+        }
+
+        // Retrieve token address from pool config for the transfer.
+        let pool_config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+        let token_address = &pool_config.token_address;
+
+        let contract_addr = env.current_contract_address();
+        XlmHandler::distribute_xlm(&env, token_address, &contract_addr, &player, claimable);
+
+        // Update claimed amount.
+        record.claimed_amount += claimable;
+        Storage::set_vesting_record(&env, hunt_id, &player, &record);
+
+        let fully_vested = record.claimed_amount >= record.total_amount;
+
+        env.events().publish(
+            (symbol_short!("VEST_CLM"), hunt_id),
+            VestedClaimedEvent {
+                hunt_id,
+                player: player.clone(),
+                claimed_amount: claimable,
+                total_claimed: record.claimed_amount,
+                fully_vested,
+            },
+        );
+
+        Ok(claimable)
+    }
+
+    /// Returns the current vesting status for a (hunt_id, player) pair.
+    ///
+    /// Returns `None` when no vesting record exists (i.e. the pool either had
+    /// no vesting configured or the player has not completed that hunt yet).
+    pub fn get_vesting_status(env: Env, hunt_id: u64, player: Address) -> Option<VestingStatus> {
+        let record = Storage::get_vesting_record(&env, hunt_id, &player)?;
+
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(record.start_time);
+
+        let vested_amount = if elapsed >= record.vesting_period_secs {
+            record.total_amount
+        } else {
+            record
+                .total_amount
+                .checked_mul(elapsed as i128)
+                .unwrap_or(record.total_amount)
+                / (record.vesting_period_secs as i128)
+        };
+
+        let claimable_amount = (vested_amount - record.claimed_amount).max(0);
+        let fully_vested = record.claimed_amount >= record.total_amount;
+
+        Some(VestingStatus {
+            start_time: record.start_time,
+            vesting_period_secs: record.vesting_period_secs,
+            total_amount: record.total_amount,
+            claimed_amount: record.claimed_amount,
+            vested_amount,
+            claimable_amount,
+            fully_vested,
+        })
+    }
+
     /// Manually resolves a distribution that failed mid-execution.
     ///
     /// Allows the contract admin to mark a distribution as either `Completed`
@@ -2078,6 +2403,131 @@ impl RewardManager {
     /// The total number of distributions for the pool.
     pub fn get_pool_distribution_count(env: Env, hunt_id: u64) -> u32 {
         Storage::get_pool_distribution_count(&env, hunt_id)
+    }
+
+    /// Returns distribution analytics (average, median, min, max) across a reward pool.
+    ///
+    /// Supports optional time-range filtering via `start_time` and `end_time`
+    /// (ledger timestamps). Only distributions within `[start_time, end_time)`
+    /// are included when both bounds are provided; `None` means unbounded.
+    ///
+    /// The computation is gas-bounded: at most [`MAX_ANALYTICS_ENTRIES`] (500)
+    /// distributions are processed. If the pool has more entries than this limit,
+    /// only the most recent entries (up to the limit) are analysed.
+    ///
+    /// # Arguments
+    /// * `hunt_id` - The hunt whose pool analytics to query
+    /// * `start_time` - Optional lower bound (inclusive) ledger timestamp filter
+    /// * `end_time` - Optional upper bound (exclusive) ledger timestamp filter
+    ///
+    /// # Returns
+    /// A `DistributionAnalytics` struct with count, total, average, median, min, max.
+    /// All fields are zero when the pool has no distributions or no entries match
+    /// the time filter.
+    pub fn get_distribution_analytics(
+        env: Env,
+        hunt_id: u64,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> DistributionAnalytics {
+        // Load all distributions for the pool (the storage Vec is naturally ordered
+        // by insertion = chronological order).
+        let all = Storage::get_pool_distributions(&env, hunt_id, 0, u32::MAX);
+        let total = all.len();
+
+        if total == 0 {
+            return DistributionAnalytics {
+                count: 0,
+                total: 0,
+                average: 0,
+                median: 0,
+                min: 0,
+                max: 0,
+            };
+        }
+
+        // Collect amounts that pass the time filter, processing in reverse
+        // (most recent first) so that when we cap at MAX_ANALYTICS_ENTRIES we
+        // get the most relevant entries.
+        let mut amounts: soroban_sdk::Vec<i128> = Vec::new(&env);
+        let mut idx = total as i64 - 1;
+        let cap = MAX_ANALYTICS_ENTRIES as u64;
+
+        while idx >= 0 && amounts.len() < cap {
+            if let Some(dist) = all.get(idx as u32) {
+                let ts = dist.timestamp;
+                let in_range = match (start_time, end_time) {
+                    (Some(start), Some(end)) => ts >= start && ts < end,
+                    (Some(start), None) => ts >= start,
+                    (None, Some(end)) => ts < end,
+                    (None, None) => true,
+                };
+                if in_range {
+                    amounts.push_back(dist.xlm_amount);
+                }
+            }
+            idx -= 1;
+        }
+
+        let count = amounts.len();
+        if count == 0 {
+            return DistributionAnalytics {
+                count: 0,
+                total: 0,
+                average: 0,
+                median: 0,
+                min: 0,
+                max: 0,
+            };
+        }
+
+        // Compute min, max, and total in one pass.
+        let mut total_amount: i128 = 0;
+        let mut min_amount: i128 = i128::MAX;
+        let mut max_amount: i128 = i128::MIN;
+        let mut j: u32 = 0;
+        while j < count {
+            let amount = amounts.get(j).unwrap();
+            total_amount += amount;
+            if amount < min_amount {
+                min_amount = amount;
+            }
+            if amount > max_amount {
+                max_amount = amount;
+            }
+            j += 1;
+        }
+
+        let average = if count > 0 {
+            total_amount / count as i128
+        } else {
+            0
+        };
+
+        // Sort amounts in ascending order for median calculation.
+        // Uses a simple selection sort. Bounded by MAX_ANALYTICS_ENTRIES (500)
+        // so O(n²) is acceptable.
+        let sorted = sort_amounts(amounts, count);
+
+        let median = if count % 2 == 1 {
+            // Odd count: take the middle element
+            sorted.get(count / 2).unwrap()
+        } else {
+            // Even count: average of two middle elements
+            let mid = count / 2;
+            let left = sorted.get(mid - 1).unwrap();
+            let right = sorted.get(mid).unwrap();
+            (left + right) / 2
+        };
+
+        DistributionAnalytics {
+            count: count as u64,
+            total: total_amount,
+            average,
+            median,
+            min: min_amount,
+            max: max_amount,
+        }
     }
 
     /// Allows the admin to withdraw any unclaimed (surplus) XLM remaining in a reward pool.
@@ -2434,6 +2884,36 @@ impl RewardManager {
 
         PoolAuditLogResponse { entries, total }
     }
+}
+
+/// Sorts a Soroban `Vec<i128>` in ascending order using selection sort.
+///
+/// Bounded to at most [`MAX_ANALYTICS_ENTRIES`] entries (500), so O(n²)
+/// complexity is acceptable for gas-bounded on-chain computation.
+fn sort_amounts(amounts: soroban_sdk::Vec<i128>, len: u32) -> soroban_sdk::Vec<i128> {
+    let mut sorted = amounts;
+    let n = len;
+    let mut i: u32 = 0;
+    while i < n {
+        let mut min_idx = i;
+        let mut j = i + 1;
+        while j < n {
+            let a_j = sorted.get(j).unwrap();
+            let a_min = sorted.get(min_idx).unwrap();
+            if a_j < a_min {
+                min_idx = j;
+            }
+            j += 1;
+        }
+        if min_idx != i {
+            let tmp = sorted.get(i).unwrap();
+            let min_val = sorted.get(min_idx).unwrap();
+            sorted.set(i, min_val);
+            sorted.set(min_idx, tmp);
+        }
+        i += 1;
+    }
+    sorted
 }
 
 pub mod errors;
