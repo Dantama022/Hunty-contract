@@ -13,6 +13,7 @@ const globalLimiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
+  
 });
 app.use('/mint', globalLimiter);
 
