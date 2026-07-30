@@ -41,7 +41,7 @@ fi
 # 4. Verify Cargo.lock is up to date
 if [ -f Cargo.lock ]; then
   if echo "$STAGED_FILES" | grep -q 'Cargo.toml' && ! echo "$STAGED_FILES" | grep -q 'Cargo.lock'; then
-    if ! cargo metadata --format-version 1 --no-deps > /dev/null 2>&1; then
+    if ! cargo metadata --locked --format-version 1 > /dev/null 2>&1; then
       echo -e "${RED}✖ Cargo.lock is out of sync. Run 'cargo generate-lockfile' to update.${NC}"
       exit 1
     fi
