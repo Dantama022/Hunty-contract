@@ -234,6 +234,7 @@ impl HuntyCoreMigration {
             let all_clues = Storage::list_clues_for_hunt(env, hunt_id, 0, clue_count);
             let mut required_ids: Vec<u32> = Vec::new(env);
             for i in 0..all_clues.len() {
+                // SAFETY: i is in [0, all_clues.len()) — loop bound guarantees existence
                 let clue = all_clues.get(i).unwrap();
                 if clue.is_required {
                     required_ids.push_back(clue.clue_id);
@@ -259,6 +260,7 @@ impl HuntyCoreMigration {
             }
             let all_clues = Storage::list_clues_for_hunt(env, hunt_id, 0, clue_count);
             for i in 0..all_clues.len() {
+                // SAFETY: i is in [0, all_clues.len()) — loop bound guarantees existence
                 let clue = all_clues.get(i).unwrap();
                 Storage::save_clue(env, hunt_id, &clue);
             }
