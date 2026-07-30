@@ -67,11 +67,10 @@ fn image_uri_is_valid(uri: &String) -> bool {
     }
     let mut buf = [0u8; 200];
     uri.copy_into_slice(&mut buf[..len as usize]);
-    if let Ok(text) = core::str::from_utf8(&buf[..len as usize]) {
-        text.starts_with("https://") || text.starts_with("ipfs://")
-    } else {
-        false
-    }
+    // SAFETY: `buf` is populated from a soroban_sdk::String via
+    // copy_into_slice, so the bytes are guaranteed to be valid UTF-8.
+    let text = unsafe { core::str::from_utf8_unchecked(&buf[..len as usize]) };
+    text.starts_with("https://") || text.starts_with("ipfs://")
 }
 
 /// Complete metadata returned by get_nft_metadata (includes NftData-derived fields).
@@ -758,9 +757,10 @@ impl NftReward {
             let suffix_len = uri_len - old_len;
             final_buf[new_len..new_len + suffix_len].copy_from_slice(&buf_uri[old_len..uri_len]);
             let total_len = new_len + suffix_len;
-            if let Ok(text) = core::str::from_utf8(&final_buf[..total_len]) {
-                return Some(String::from_str(env, text));
-            }
+            // SAFETY: `final_buf` is assembled entirely from bytes copied
+            // out of soroban_sdk::String values, so the slice is valid UTF-8.
+            let text = unsafe { core::str::from_utf8_unchecked(&final_buf[..total_len]) };
+            return Some(String::from_str(env, text));
         }
         None
     }
