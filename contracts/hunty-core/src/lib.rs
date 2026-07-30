@@ -253,6 +253,7 @@ impl HuntyCore {
         // Clone each clue from the template
         let template_clues = Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
         for i in 0..template_clues.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let clue = template_clues.get(i).unwrap();
             let cloned_clue = Clue {
                 clue_id: Storage::next_clue_id(&env, hunt_id),
@@ -516,6 +517,7 @@ impl HuntyCore {
         let mut clue_ids = Vec::new(&env);
         let mut batch_required = 0u32;
         for i in 0..clues.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let clue = clues.get(i).unwrap();
             let clue_id = Self::insert_clue(
                 &env,
@@ -663,6 +665,7 @@ impl HuntyCore {
             Storage::get_clue_or_error(&env, hunt_id, clue_id).map_err(HuntErrorCode::from)?;
 
         for i in 0..answers.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let answer = answers.get(i).unwrap();
             let hash = Self::normalize_and_hash_answer(&env, hunt_id, clue_id, &answer)
                 .map_err(HuntErrorCode::from)?;
@@ -707,6 +710,7 @@ impl HuntyCore {
         let mut out = Vec::new(&env);
         let limit = core::cmp::min(raw.len(), MAX_BATCH_SIZE);
         for i in 0..limit {
+            // SAFETY: i is in [0, limit) and limit <= raw.len()
             let c = raw.get(i).unwrap();
             out.push_back(ClueInfo {
                 clue_id: c.clue_id,
@@ -1002,6 +1006,7 @@ impl HuntyCore {
 
         let mut sanitized = Vec::new(env);
         for i in 0..categories.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let category = categories.get(i).unwrap();
             let category = crate::sanitization::StringSanitizer::sanitize(
                 env,
@@ -1036,6 +1041,7 @@ impl HuntyCore {
 
         let mut total = 0u32;
         for i in 0..clues.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             total = total.saturating_add(clues.get(i).unwrap().difficulty);
         }
         hunt.difficulty_rating = total / clues.len();
@@ -1050,6 +1056,7 @@ impl HuntyCore {
     fn hunt_has_category(hunt: &Hunt, category: &String) -> bool {
         for i in 0..hunt.categories.len() {
             if Self::strings_equal_bounded::<{ MAX_CATEGORY_BYTES as usize }>(
+                // SAFETY: i is within the vector bounds established by the enclosing loop
                 &hunt.categories.get(i).unwrap(),
                 category,
             ) {
@@ -1469,6 +1476,7 @@ impl HuntyCore {
         let players = Storage::get_hunt_players(&env, hunt_id);
         let mut rewarded_players = 0u32;
         for i in 0..players.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let mut progress = players.get(i).unwrap();
             if progress.is_completed && !progress.reward_claimed {
                 Self::distribute_player_reward(&env, &mut hunt, &mut progress)?;
@@ -2189,7 +2197,11 @@ impl HuntyCore {
 
         let mut correct = false;
         for i in 0..clue.answer_hashes.len() {
-            if clue.answer_hashes.get(i).unwrap() == submitted_hash {
+            // Stored state: prefer typed absence over panic on inconsistent clue data.
+            let Some(stored_hash) = clue.answer_hashes.get(i) else {
+                return false;
+            };
+            if stored_hash == submitted_hash {
                 correct = true;
                 break;
             }
@@ -2302,7 +2314,11 @@ impl HuntyCore {
 
     fn is_answer_correct(clue: &Clue, submitted_hash: &BytesN<32>) -> bool {
         for i in 0..clue.answer_hashes.len() {
-            if clue.answer_hashes.get(i).unwrap() == *submitted_hash {
+            // Stored state: prefer typed absence over panic on inconsistent clue data.
+            let Some(stored_hash) = clue.answer_hashes.get(i) else {
+                return false;
+            };
+            if stored_hash == *submitted_hash {
                 return true;
             }
         }
@@ -2460,7 +2476,11 @@ impl HuntyCore {
         if hunt.max_submissions_per_minute > 0 {
             let mut updated_submissions = Vec::new(&env);
             for i in 0..progress.recent_submissions.len() {
-                let ts = progress.recent_submissions.get(i).unwrap();
+                // Stored state may be inconsistent — return a typed error instead of aborting.
+                let ts = progress
+                    .recent_submissions
+                    .get(i)
+                    .ok_or(HuntErrorCode::CorruptPlayerProgress)?;
                 if current_time < ts + 60 {
                     updated_submissions.push_back(ts);
                 }
@@ -2468,7 +2488,11 @@ impl HuntyCore {
             progress.recent_submissions = updated_submissions;
 
             if progress.recent_submissions.len() >= hunt.max_submissions_per_minute {
-                let oldest_ts = progress.recent_submissions.get(0).unwrap();
+                // Stored state may be inconsistent — return a typed error instead of aborting.
+                let oldest_ts = progress
+                    .recent_submissions
+                    .get(0)
+                    .ok_or(HuntErrorCode::CorruptPlayerProgress)?;
                 let elapsed = current_time.saturating_sub(oldest_ts);
                 let cooldown_remaining = 60u64.saturating_sub(elapsed);
                 return Err(HuntErrorCode::from(HuntError::RateLimitExceeded));
@@ -2577,7 +2601,11 @@ impl HuntyCore {
         if hunt.max_submissions_per_minute > 0 {
             let mut updated_submissions = Vec::new(&env);
             for i in 0..progress.recent_submissions.len() {
-                let ts = progress.recent_submissions.get(i).unwrap();
+                // Stored state may be inconsistent — return a typed error instead of aborting.
+                let ts = progress
+                    .recent_submissions
+                    .get(i)
+                    .ok_or(HuntErrorCode::CorruptPlayerProgress)?;
                 if current_time < ts + 60 {
                     updated_submissions.push_back(ts);
                 }
@@ -2585,7 +2613,11 @@ impl HuntyCore {
             progress.recent_submissions = updated_submissions;
 
             if progress.recent_submissions.len() >= hunt.max_submissions_per_minute {
-                let oldest_ts = progress.recent_submissions.get(0).unwrap();
+                // Stored state may be inconsistent — return a typed error instead of aborting.
+                let oldest_ts = progress
+                    .recent_submissions
+                    .get(0)
+                    .ok_or(HuntErrorCode::CorruptPlayerProgress)?;
                 let elapsed = current_time.saturating_sub(oldest_ts);
                 let cooldown_remaining = 60u64.saturating_sub(elapsed);
                 return Err(HuntErrorCode::from(HuntError::RateLimitExceeded));
@@ -2613,6 +2645,7 @@ impl HuntyCore {
         let players = Storage::get_hunt_players(env, hunt_id);
         let mut completed_players = 0u32;
         for i in 0..players.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let progress = players.get(i).unwrap();
             if progress.is_completed {
                 completed_players += 1;
@@ -2704,6 +2737,7 @@ impl HuntyCore {
             let clue_count = Storage::get_clue_counter(env, hunt_id);
             let all_clues = Storage::list_clues_for_hunt(env, hunt_id, 0, clue_count);
             for i in 0..all_clues.len() {
+                // SAFETY: i is within the vector bounds established by the enclosing loop
                 let clue = all_clues.get(i).unwrap();
                 if clue.is_required && !progress.has_completed_clue(clue.clue_id) {
                     return false;
@@ -2714,6 +2748,7 @@ impl HuntyCore {
 
         // Fast path: check only the required clue IDs
         for i in 0..required_ids.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let cid = required_ids.get(i).unwrap();
             if !progress.has_completed_clue(cid) {
                 return false;
@@ -2765,6 +2800,7 @@ impl HuntyCore {
         let mut result = Vec::new(&env);
         let result_len = core::cmp::min(effective_limit, entries.len());
         for i in 0..result_len {
+            // SAFETY: i is in [0, result_len) where result_len <= entries.len()
             let entry = entries.get(i).unwrap();
             result.push_back(LeaderboardEntry {
                 rank: i + 1,
@@ -2805,6 +2841,7 @@ impl HuntyCore {
 
         let mut rows = Vec::new(&env);
         for i in start..end {
+            // SAFETY: start..end is clamped to [0, players.len())
             let p = players.get(i).unwrap();
             rows.push_back(crate::types::LeaderboardRow {
                 index: i,
@@ -2836,6 +2873,7 @@ impl HuntyCore {
         for i in 0..n {
             let mut taken = false;
             for j in 0..selected.len() {
+                // SAFETY: j is in [0, selected.len()) — loop bound guarantees existence
                 if selected.get(j).unwrap() == i {
                     taken = true;
                     break;
@@ -2844,10 +2882,12 @@ impl HuntyCore {
             if taken {
                 continue;
             }
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let (_, score, completed_at, _) = entries.get(i).unwrap();
             let better = match best_idx {
                 None => true,
                 Some(bi) => {
+                    // SAFETY: bi was set from a previously validated index in this vec
                     let (_, b_score, b_completed_at, _) = entries.get(bi).unwrap();
                     if score > b_score {
                         true
@@ -2886,6 +2926,7 @@ impl HuntyCore {
 
         let mut existing_idx: Option<u32> = None;
         for i in 0..entries.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let entry = entries.get(i).unwrap();
             if entry.player == progress.player {
                 existing_idx = Some(i);
@@ -2899,6 +2940,7 @@ impl HuntyCore {
 
         let mut insert_at = entries.len();
         for i in 0..entries.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let current = entries.get(i).unwrap();
             if Self::leaderboard_entry_precedes(&updated, &current) {
                 insert_at = i;
@@ -2947,6 +2989,7 @@ impl HuntyCore {
         let mut completed_count: u32 = 0;
         let mut total_score_sum: u64 = 0;
         for i in 0..players.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let p = players.get(i).unwrap();
             if p.is_completed {
                 completed_count = completed_count
@@ -3286,6 +3329,7 @@ impl HuntyCore {
         let mut total = 0u32;
         let mut required = 0u32;
         for i in 0..clues.len() {
+            // SAFETY: i is within the vector bounds established by the enclosing loop
             let clue = clues.get(i).unwrap();
             total += 1;
             if clue.is_required {

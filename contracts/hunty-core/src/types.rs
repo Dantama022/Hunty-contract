@@ -324,7 +324,10 @@ impl PlayerProgress {
     ) -> Self {
         let mut completed_clue_index = Map::new(env);
         for i in 0..stored.completed_clues.len() {
-            let clue_id = stored.completed_clues.get(i).unwrap();
+            // Stored state may be inconsistent — skip missing entries instead of aborting.
+            let Some(clue_id) = stored.completed_clues.get(i) else {
+                continue;
+            };
             completed_clue_index.set(clue_id, true);
         }
 
@@ -354,7 +357,11 @@ impl PlayerProgress {
 
     pub fn has_completed_clue(&self, clue_id: u32) -> bool {
         for i in 0..self.completed_clues.len() {
-            if self.completed_clues.get(i).unwrap() == clue_id {
+            // Stored state may be inconsistent — treat missing entries as not completed.
+            let Some(stored_id) = self.completed_clues.get(i) else {
+                return false;
+            };
+            if stored_id == clue_id {
                 return true;
             }
         }
@@ -363,7 +370,11 @@ impl PlayerProgress {
 
     pub fn has_requested_hint(&self, clue_id: u32) -> bool {
         for i in 0..self.hinted_clues.len() {
-            if self.hinted_clues.get(i).unwrap() == clue_id {
+            // Stored state may be inconsistent — treat missing entries as not hinted.
+            let Some(stored_id) = self.hinted_clues.get(i) else {
+                return false;
+            };
+            if stored_id == clue_id {
                 return true;
             }
         }
