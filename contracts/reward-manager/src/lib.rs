@@ -285,9 +285,12 @@ impl RewardManager {
         }
 
         Storage::set_pending_admin(&env, &new_admin);
-        
+
         env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "ADMIN"), soroban_sdk::Symbol::new(&env, "ADM_PROP")),
+            (
+                soroban_sdk::Symbol::new(&env, "ADMIN"),
+                soroban_sdk::Symbol::new(&env, "ADM_PROP"),
+            ),
             (admin, new_admin),
         );
 
@@ -313,7 +316,10 @@ impl RewardManager {
             .unwrap_or_else(|| soroban_sdk::String::from_str(&env, "NONE"));
 
         env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "ADMIN"), soroban_sdk::Symbol::new(&env, "ADM_TRF")),
+            (
+                soroban_sdk::Symbol::new(&env, "ADMIN"),
+                soroban_sdk::Symbol::new(&env, "ADM_TRF"),
+            ),
             (old_admin_str, new_admin.to_string()),
         );
 
@@ -1460,8 +1466,7 @@ impl RewardManager {
                 xlm_amount = amount;
                 Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
 
-                let total_distributed =
-                    Storage::get_pool_total_distributed(&env, hunt_id) + amount;
+                let total_distributed = Storage::get_pool_total_distributed(&env, hunt_id) + amount;
                 Storage::set_pool_total_distributed(&env, hunt_id, total_distributed);
                 let global_total = Storage::get_total_xlm_distributed(&env) + amount;
                 Storage::set_total_xlm_distributed(&env, global_total);
@@ -1488,8 +1493,7 @@ impl RewardManager {
                 xlm_amount = amount;
                 Storage::set_pool_balance(&env, hunt_id, pool_balance - amount);
 
-                let total_distributed =
-                    Storage::get_pool_total_distributed(&env, hunt_id) + amount;
+                let total_distributed = Storage::get_pool_total_distributed(&env, hunt_id) + amount;
                 Storage::set_pool_total_distributed(&env, hunt_id, total_distributed);
                 let global_total = Storage::get_total_xlm_distributed(&env) + amount;
                 Storage::set_total_xlm_distributed(&env, global_total);
@@ -2163,7 +2167,7 @@ impl RewardManager {
 
     /// Returns whether a reward has been distributed to a player for a hunt.
     pub fn is_reward_distributed(env: Env, hunt_id: u64, player: Address) -> bool {
-        Storage::is_distributed(&env, hunt_id, &player)
+        Storage::get_distribution_record(&env, hunt_id, &player).is_some()
     }
 
     // =========================================================================
@@ -2229,11 +2233,7 @@ impl RewardManager {
     /// * `VestingAlreadyClaimed` - Full vesting amount has already been claimed
     /// * `NothingToVest` - Nothing has vested yet at the current timestamp
     /// * `InsufficientPool` - Contract token balance is too low (should not normally occur)
-    pub fn claim_vested(
-        env: Env,
-        player: Address,
-        hunt_id: u64,
-    ) -> Result<i128, RewardErrorCode> {
+    pub fn claim_vested(env: Env, player: Address, hunt_id: u64) -> Result<i128, RewardErrorCode> {
         player.require_auth();
 
         let mut record = Storage::get_vesting_record(&env, hunt_id, &player)
@@ -2356,7 +2356,7 @@ impl RewardManager {
             return Err(RewardErrorCode::Unauthorized);
         }
 
-        if !Storage::is_distributed(&env, hunt_id, &player) {
+        if Storage::get_distribution_record(&env, hunt_id, &player).is_none() {
             return Err(RewardErrorCode::DistributionNotFound);
         }
 

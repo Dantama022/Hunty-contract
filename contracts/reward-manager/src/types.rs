@@ -188,8 +188,6 @@ pub enum PoolOperation {
     Migrate,
 }
 
-/// Resolution status for admin-resolved distributions.
-
 /// Comprehensive statistics for a reward pool, returned by get_pool_statistics().
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]

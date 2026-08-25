@@ -1,9 +1,11 @@
 #![cfg_attr(not(test), no_std)]
+#![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Map,
-    String, Symbol, Val, Vec,
+    contract, contractimpl, contracttype, panic_with_error, Address, Env, Map, String, Symbol, Val,
+    Vec,
 };
 
+#[allow(dead_code)]
 const MAX_URI_LEN: usize = 512;
 const MAX_NFT_TITLE_BYTES: u32 = 128;
 const MAX_NFT_DESCRIPTION_BYTES: u32 = 1024;
@@ -397,7 +399,7 @@ impl NftReward {
     }
 
     fn validate_extensions(
-        env: &Env,
+        _env: &Env,
         extensions: &Map<String, String>,
     ) -> Result<(), NftErrorCode> {
         let count = extensions.len();
@@ -861,7 +863,7 @@ impl NftReward {
     pub fn get_remaining_supply(env: Env) -> Option<u64> {
         match Storage::get_max_supply(&env) {
             None => None,
-            Some(max) if max == 0 => None, // explicit 0 ⟹ unlimited
+            Some(0) => None,
             Some(max) => {
                 let minted = Storage::get_nft_counter(&env);
                 Some(max.saturating_sub(minted))
