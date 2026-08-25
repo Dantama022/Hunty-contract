@@ -596,6 +596,16 @@ pub struct AnswerIncorrectEvent {
     pub timestamp: u64,
 }
 
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AnswerPreviewedEvent {
+    pub hunt_id: u64,
+    pub player: Address,
+    pub clue_id: u32,
+    pub is_correct: bool,
+    pub timestamp: u64,
+}
+
 /// Leaderboard entry for a single player in a hunt (read-only query result).
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq)]
