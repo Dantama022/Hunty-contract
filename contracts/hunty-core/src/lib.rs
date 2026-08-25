@@ -5,12 +5,12 @@ use crate::types::{
     AnswerIncorrectEvent, BatchClueInput, Clue, ClueAddedEvent, ClueAliasesAddedEvent,
     ClueCompletedEvent, ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt,
     HuntActivatedEvent, HuntArchivedEvent, HuntCache, HuntCancelledEvent, HuntClonedEvent,
-    HuntClosedEvent,
-    HuntCompletedEvent, HuntCreatedEvent, HuntDeactivatedEvent, HuntDescriptionUpdatedEvent,
-    HuntReactivatedEvent, HuntStatistics, HuntStatus, HuntStatusChangedEvent,
-    InviteCodeGeneratedEvent, InviteCodeRevokedEvent, LeaderboardEntry, LeaderboardIndexEntry,
-    LeaderboardResult, PlayerProgress, PlayerRegisteredEvent, PlayerRegisteredWithInviteEvent,
-    RewardClaimedEvent, RewardConfig, RewardManagerSetEvent, TimeBonusConfig,
+    HuntClosedEvent, HuntCompletedEvent, HuntCreatedEvent, HuntDeactivatedEvent,
+    HuntDescriptionUpdatedEvent, HuntReactivatedEvent, HuntStatistics, HuntStatus,
+    HuntStatusChangedEvent, InviteCodeGeneratedEvent, InviteCodeRevokedEvent, LeaderboardEntry,
+    LeaderboardIndexEntry, LeaderboardResult, PlayerProgress, PlayerRegisteredEvent,
+    PlayerRegisteredWithInviteEvent, RewardClaimedEvent, RewardConfig, RewardManagerSetEvent,
+    TimeBonusConfig,
 };
 use reward_interface::RewardErrorCode;
 use soroban_sdk::{
@@ -227,8 +227,8 @@ impl HuntyCore {
         // Ensure caller is authenticated
         caller.require_auth();
         // Load template hunt
-        let template_hunt = Storage::get_hunt(&env, template_hunt_id)
-            .ok_or(HuntErrorCode::HuntNotFound)?;
+        let template_hunt =
+            Storage::get_hunt(&env, template_hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
         // Ensure the template hunt is completed before cloning
         if template_hunt.status != HuntStatus::Completed {
             return Err(HuntErrorCode::InvalidHuntStatus);
@@ -251,7 +251,8 @@ impl HuntyCore {
 
         let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
         // Clone each clue from the template
-        let template_clues = Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
+        let template_clues =
+            Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
         for i in 0..template_clues.len() {
             // SAFETY: i is within the vector bounds established by the enclosing loop
             let clue = template_clues.get(i).unwrap();
@@ -295,7 +296,8 @@ impl HuntyCore {
             new_hunt_id: hunt_id,
             creator: caller.clone(),
         };
-        env.events().publish((Symbol::new(&env, "HuntCloned"), hunt_id), clone_event);
+        env.events()
+            .publish((Symbol::new(&env, "HuntCloned"), hunt_id), clone_event);
         Ok(hunt_id)
     }
 
@@ -567,7 +569,7 @@ impl HuntyCore {
 
         // Get hunt to access default_points
         let hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
-        
+
         // Apply default_points when clue points is 0
         let final_points = if points == 0 {
             hunt.default_points
@@ -1499,13 +1501,7 @@ impl HuntyCore {
         env.events()
             .publish((Symbol::new(&env, "HuntClosed"), hunt_id), event);
 
-        Self::emit_hunt_status_changed(
-            &env,
-            hunt_id,
-            old_status,
-            HuntStatus::Completed,
-            closed_at,
-        );
+        Self::emit_hunt_status_changed(&env, hunt_id, old_status, HuntStatus::Completed, closed_at);
 
         Ok(())
     }
@@ -1583,8 +1579,6 @@ impl HuntyCore {
             .publish((Symbol::new(&env, "RewardManagerSet"),), event);
         Ok(())
     }
-
-
 
     /// Blacklists a creator address, preventing them from creating new hunts.
     /// Caller must be the admin.
@@ -2160,8 +2154,10 @@ impl HuntyCore {
             hunt_id,
             player: player.clone(),
         };
-        env.events()
-            .publish((Symbol::new(&env, "PlayerRegisteredWithInvite"), hunt_id), event);
+        env.events().publish(
+            (Symbol::new(&env, "PlayerRegisteredWithInvite"), hunt_id),
+            event,
+        );
 
         Ok(())
     }
@@ -2247,9 +2243,9 @@ impl HuntyCore {
     ) -> u32 {
         let elapsed = completed_at.saturating_sub(started_at);
         let decrease_steps = elapsed / 50; // Decrease every 50 seconds
-        // Use saturating multiplication to prevent overflow on very large elapsed times
+                                           // Use saturating multiplication to prevent overflow on very large elapsed times
         let decrease_bps = decrease_steps.saturating_mul(5000); // 5000 bps = 0.5x per step
-        // Cap at u32::MAX before truncating to prevent silent wrap-around
+                                                                // Cap at u32::MAX before truncating to prevent silent wrap-around
         let decrease_bps_u32 = if decrease_bps > u32::MAX as u64 {
             u32::MAX
         } else {
@@ -2257,8 +2253,7 @@ impl HuntyCore {
         };
         let multiplier_bps = core::cmp::max(
             10000, // Minimum 1x
-            hunt.start_multiplier_bps
-                .saturating_sub(decrease_bps_u32),
+            hunt.start_multiplier_bps.saturating_sub(decrease_bps_u32),
         );
         let base_points = clue
             .points
@@ -2363,13 +2358,15 @@ impl HuntyCore {
             progress.recent_submissions = Vec::new(env);
         }
 
-        let all_required_completed = Self::check_all_required_clues_completed(env, hunt_id, progress);
+        let all_required_completed =
+            Self::check_all_required_clues_completed(env, hunt_id, progress);
 
         if all_required_completed && !progress.is_completed {
             progress.is_completed = true;
             progress.completed_at = current_time;
 
-            let mut hunt_mut = Storage::get_hunt(env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+            let mut hunt_mut =
+                Storage::get_hunt(env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
             hunt_mut.completed_count += 1;
             let rank = hunt_mut.completed_count;
             Storage::save_hunt(env, &hunt_mut);
@@ -2502,7 +2499,8 @@ impl HuntyCore {
         if hunt.attempt_cooldown_secs > 0 {
             if let Some(last_attempt) = progress.clue_last_attempts.get(clue_id) {
                 if current_time < last_attempt + (hunt.attempt_cooldown_secs as u64) {
-                    let cooldown_remaining = (last_attempt + (hunt.attempt_cooldown_secs as u64)) - current_time;
+                    let cooldown_remaining =
+                        (last_attempt + (hunt.attempt_cooldown_secs as u64)) - current_time;
                     return Err(HuntErrorCode::from(HuntError::AttemptCooldownNotExpired));
                 }
             }
@@ -3336,11 +3334,16 @@ impl HuntyCore {
                 required += 1;
             }
         }
-        assert_eq!(hunt.total_clues, total, "total_clues drifted for hunt {hunt_id}");
-        assert_eq!(hunt.required_clues, required, "required_clues drifted for hunt {hunt_id}");
+        assert_eq!(
+            hunt.total_clues, total,
+            "total_clues drifted for hunt {hunt_id}"
+        );
+        assert_eq!(
+            hunt.required_clues, required,
+            "required_clues drifted for hunt {hunt_id}"
+        );
     }
 }
-
 
 mod errors;
 mod migration;

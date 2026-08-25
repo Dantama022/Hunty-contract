@@ -191,7 +191,6 @@ pub struct Location {
     pub radius: u32,
 }
 
-
 /// Internal compact storage representation of player progress.
 /// Does not store `player` or `hunt_id` — those are already the storage key.
 ///
@@ -224,8 +223,6 @@ pub struct StoredPlayerProgress {
     pub clue_last_attempts: Map<u32, u64>,
     pub required_completed_count: u32,
 }
-
-
 
 /// Public view of player progress, with `player` and `hunt_id` reconstructed from the key.
 #[contracttype]
@@ -265,9 +262,9 @@ impl PlayerProgress {
         }
     }
 
-    /// Pack boolean flags into a single byte
-    fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u8 {
-        let mut flags = 0u8;
+    /// Pack boolean flags into a u32 bitmask
+    pub fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u32 {
+        let mut flags = 0u32;
         if is_completed {
             flags |= 0x01;
         }
@@ -282,13 +279,7 @@ impl PlayerProgress {
     /// `activated_at` is the hunt's activation timestamp, used to delta-encode
     /// `started_at` and `completed_at` into compact `u32` offsets.
     pub fn to_stored(&self, activated_at: u64) -> StoredPlayerProgress {
-        let mut flags: u32 = 0;
-        if self.is_completed {
-            flags |= 0b0000_0001;
-        }
-        if self.reward_claimed {
-            flags |= 0b0000_0010;
-        }
+        let flags = Self::bools_to_flags(self.is_completed, self.reward_claimed);
 
         // Delta-encode timestamps relative to hunt activation.
         let started_at_delta = self.started_at.saturating_sub(activated_at) as u32;
