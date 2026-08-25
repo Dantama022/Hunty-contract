@@ -135,6 +135,7 @@ pub struct NftMintedEvent {
     pub rarity: u32,
     pub tier: u32,
     pub minted_at: u64,
+    pub metadata: NftMetadata,
 }
 
 /// Event emitted when an operator approval changes.
@@ -458,12 +459,22 @@ impl NftReward {
         let minted_at = env.ledger().timestamp();
         let nft_id = Storage::next_nft_id(&env);
 
+        let event = NftMintedEvent {
+            nft_id,
+            hunt_id,
+            owner: player_address.clone(),
+            rarity: metadata.rarity,
+            tier: metadata.tier,
+            minted_at,
+            metadata: metadata.clone(),
+        };
+
         let nft_data = NftData {
             nft_id,
             hunt_id,
             owner: player_address.clone(),
             completion_player: player_address.clone(),
-            metadata: metadata.clone(),
+            metadata,
             transferable,
             minted_at,
             locked: false,
@@ -476,14 +487,6 @@ impl NftReward {
         Storage::mark_hunt_minted(&env, hunt_id);
         Storage::update_collection_metadata_total_supply(&env, Storage::get_nft_counter(&env));
 
-        let event = NftMintedEvent {
-            nft_id,
-            hunt_id,
-            owner: player_address,
-            rarity: nft_data.metadata.rarity,
-            tier: nft_data.metadata.tier,
-            minted_at,
-        };
         env.events()
             .publish((Symbol::new(&env, "NftMinted"), nft_id), event);
 
