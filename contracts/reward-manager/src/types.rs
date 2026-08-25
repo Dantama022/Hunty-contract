@@ -186,6 +186,8 @@ pub enum PoolOperation {
     Unfreeze,
     /// Unused balance was migrated out to (or into) another hunt's pool.
     Migrate,
+    /// Pool balance was refunded to the pool creator.
+    Refund,
 }
 
 /// Resolution status for admin-resolved distributions.
