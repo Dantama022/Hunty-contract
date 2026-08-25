@@ -20,6 +20,12 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 
 ## hunty-core (`contracts/hunty-core/src/storage.rs`)
 
+> **Garbage collection (issue #446).** Soroban cannot scan by key prefix, so
+> `Storage::sweep_hunt_storage` reconstructs a hunt's entries from the same key
+> builders that wrote them. Any **per-hunt** key added below must also be added
+> to that function, or it becomes a permanent leak: once the hunt record is gone
+> there is nothing left to enumerate it from.
+
 | Constant | Symbol | Shape / notes |
 |---|---|---|
 | `HUNT_KEY` | `HUNT` | `(HUNT, hunt_id)` — hunt record |
@@ -147,7 +153,9 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | `HAS_AUTH_KEY` | `HAUTH` | auth-initialized flag |
 | `AUDIT_COUNT_KEY` | `AUDC` | `(AUDC, hunt_id)` — also seen as `ACNT` / `ACT` in merges |
 | `AUDIT_LOG_KEY` | `AUDL` | `(AUDL, hunt_id, index)` — also seen as `ALOG` / `AL` |
-| `PAUSED_KEY` | `PAUSE` | emergency pause — also seen as `PAUSED` / `PAUS` |
+| `PAUSED_KEY` | `PAUSE` | emergency pause (global stop) — also seen as `PAUSED` / `PAUS` |
+| `PAUSE_FUNDING_KEY` | `PAUSE_FD` | granular pause: blocks pool funding (issue #628) |
+| `PAUSE_DIST_KEY` | `PAUSE_DS` | granular pause: blocks reward distribution (issue #628) |
 | `EMERGENCY_LOG_KEY` | `EMLOG` | emergency action log — also seen as `ELOG` |
 | `PENDING_NFT_KEY` | `PNFT` | `(PNFT, hunt_id, player)` pending mint |
 | `VESTING_KEY` | `VEST` | `(VEST, hunt_id, player)` — vesting record |
