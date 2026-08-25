@@ -1,3 +1,11 @@
+mod errors;
+mod migration;
+mod monitoring;
+mod rate_limit;
+mod sanitization;
+mod storage;
+pub mod types;
+
 #![no_std]
 use crate::errors::{HuntError, HuntErrorCode};
 use crate::storage::Storage;
@@ -3341,14 +3349,6 @@ impl HuntyCore {
     }
 }
 
-
-mod errors;
-mod migration;
-mod monitoring;
-mod rate_limit;
-mod sanitization;
-mod storage;
-pub mod types;
 
 #[cfg(test)]
 mod test;
