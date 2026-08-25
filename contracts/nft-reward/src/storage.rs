@@ -23,8 +23,10 @@ impl Storage {
     const TOTAL_HUNTS_KEY: soroban_sdk::Symbol = symbol_short!("TH");
     const TOTAL_OWNERS_KEY: soroban_sdk::Symbol = symbol_short!("TO");
     const ALL_NFTS_KEY: soroban_sdk::Symbol = symbol_short!("ALLNFT");
+    /// Per-NFT metadata schema version — distinct from `CONTRACT_VERSION_KEY` (`CTRV`).
     const NFT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("NFTV");
     const CONTRACT_VERSION_KEY: soroban_sdk::Symbol = symbol_short!("CTRV");
+    const OPERATOR_KEY: soroban_sdk::Symbol = symbol_short!("OPKEY");
 
     fn nft_key(nft_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::NFT_KEY, nft_id)
@@ -74,7 +76,7 @@ impl Storage {
         owner: &Address,
         operator: &Address,
     ) -> (soroban_sdk::Symbol, Address, Address) {
-        (symbol_short!("OPKEY"), owner.clone(), operator.clone())
+        (Self::OPERATOR_KEY, owner.clone(), operator.clone())
     }
 
     fn locker_key(locker: &Address) -> (soroban_sdk::Symbol, Address) {
@@ -291,16 +293,7 @@ impl Storage {
     }
 
     pub fn get_nft_count_for_hunt(env: &Env, hunt_id: u64) -> u64 {
-        let all_ids = Self::get_all_nft_ids(env);
-        let mut count = 0u64;
-        for nft_id in all_ids.iter() {
-            if let Some(nft) = Self::get_nft(env, nft_id) {
-                if nft.hunt_id == hunt_id {
-                    count += 1;
-                }
-            }
-        }
-        count
+        Self::get_hunt_nft_count(env, hunt_id) as u64
     }
 
     pub fn mark_hunt_minted(env: &Env, hunt_id: u64) {

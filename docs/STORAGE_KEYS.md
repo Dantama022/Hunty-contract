@@ -85,10 +85,10 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | `NFT_KEY` | `NF` | `(NF, nft_id)` — full NFT blob |
 | `NFT_CORE_KEY` | `NC` | `(NC, nft_id)` — core fields |
 | `NFT_META_KEY` | `NM` | `(NM, nft_id)` — metadata |
-| `NFT_VERSION_KEY` | `NV` | `(NV, nft_id)` — per-NFT metadata version |
+| `NFT_VERSION_KEY` | `NFTV` | `(NFTV, nft_id)` — per-NFT metadata version (distinct from `CTRV`) |
 | `NFT_COUNTER_KEY` | `CN` | next NFT id |
 | `OWNER_NFT_COUNT_KEY` | `ONFC` | `(ONFC, owner)` |
-| `HUNT_NFT_COUNT_KEY` | `HN` | `(HN, hunt_id)` |
+| `HUNT_NFT_COUNT_KEY` | `HNFC` | `(HNFC, hunt_id)` — per-hunt mint count index |
 | `MAX_SUPPLY_KEY` | `MAXS` | collection max supply |
 | `INITIALIZED_KEY` | `INIT` | init flag |
 | `ADMIN_KEY` | `ADMIN` | admin (also historically `ADMN`) |
@@ -96,10 +96,11 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | `REWARD_MGR_KEY` | `RWDMGR` | reward-manager address (also historically `RWMG`) |
 | `COLLECTION_METADATA_KEY` | `COLL` | collection metadata |
 | `HAS_AUTH_KEY` | `HAUTH` | auth-initialized flag |
-| `ALL_NFTS_KEY` | `AN` | vector of all minted NFT ids |
+| `ALL_NFTS_KEY` | `ALLNFT` | vector of all minted NFT ids |
 | `TOTAL_HUNTS_KEY` | `TH` | distinct hunts that minted |
 | `TOTAL_OWNERS_KEY` | `TO` | distinct owners counter |
-| `CONTRACT_VERSION_KEY` | `CV` | contract version |
+| `CONTRACT_VERSION_KEY` | `CTRV` | contract version (instance storage) |
+| `OPERATOR_KEY` | `OPKEY` | `(OPKEY, owner, operator)` — operator approval flag |
 
 ### Composite constructors (nft-reward)
 
@@ -145,13 +146,18 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | `TOTAL_XLM_DST_KEY` | `TXDST` | total XLM distributed |
 | `IN_DISTRIBUTION_KEY` | `IN_DIST` | re-entrancy / in-flight flag |
 | `HAS_AUTH_KEY` | `HAUTH` | auth-initialized flag |
-| `AUDIT_COUNT_KEY` | `AUDC` | `(AUDC, hunt_id)` — also seen as `ACNT` / `ACT` in merges |
-| `AUDIT_LOG_KEY` | `AUDL` | `(AUDL, hunt_id, index)` — also seen as `ALOG` / `AL` |
+| `AUDIT_COUNT_KEY` | `AUDC` | `(AUDC, hunt_id)` — total audit entries appended |
+| `AUDIT_LOG_KEY` | `AUDL` | `(AUDL, hunt_id, index)` — ring-buffer slot (`index % MAX_AUDIT_ENTRIES_PER_POOL`) |
 | `PAUSED_KEY` | `PAUSE` | emergency pause — also seen as `PAUSED` / `PAUS` |
 | `EMERGENCY_LOG_KEY` | `EMLOG` | emergency action log — also seen as `ELOG` |
 | `PENDING_NFT_KEY` | `PNFT` | `(PNFT, hunt_id, player)` pending mint |
-| `VESTING_KEY` | `VEST` | `(VEST, hunt_id, player)` — vesting record |
 | `VESTING_KEY` | `VEST` | `(VEST, hunt_id, player)` vesting record |
+
+### Audit log capacity (reward-manager)
+
+| Constant | Value | Notes |
+|---|---|---|
+| `MAX_AUDIT_ENTRIES_PER_POOL` | `50` | Ring-buffer cap per hunt; not a storage key — bounds `(AUDL, hunt_id, index)` slots |
 
 ### Inline / helper symbols (reward-manager)
 
