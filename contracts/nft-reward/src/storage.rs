@@ -125,19 +125,16 @@ impl Storage {
 
     // --- Minter whitelist (reserved for admin-gated minting) ---
 
-    #[allow(dead_code)]
     pub fn add_minter(env: &Env, minter: &Address) {
         let key = Self::minter_key(minter);
         env.storage().persistent().set(&key, &true);
     }
 
-    #[allow(dead_code)]
     pub fn remove_minter(env: &Env, minter: &Address) {
         let key = Self::minter_key(minter);
         env.storage().persistent().remove(&key);
     }
 
-    #[allow(dead_code)]
     pub fn is_minter(env: &Env, minter: &Address) -> bool {
         let key = Self::minter_key(minter);
         env.storage().persistent().get(&key).unwrap_or(false)
