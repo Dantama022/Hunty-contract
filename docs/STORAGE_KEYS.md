@@ -96,7 +96,7 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 | `REWARD_MGR_KEY` | `RWDMGR` | reward-manager address (also historically `RWMG`) |
 | `COLLECTION_METADATA_KEY` | `COLL` | collection metadata |
 | `HAS_AUTH_KEY` | `HAUTH` | auth-initialized flag |
-| `ALL_NFTS_KEY` | `AN` | vector of all minted NFT ids |
+| `ALL_NFTS_KEY` | `ALLNFT` | vector of all minted NFT ids |
 | `TOTAL_HUNTS_KEY` | `TH` | distinct hunts that minted |
 | `TOTAL_OWNERS_KEY` | `TO` | distinct owners counter |
 | `CONTRACT_VERSION_KEY` | `CV` | contract version |
@@ -208,7 +208,7 @@ Historical longer prefixes that were shortened (see ADR 002):
 - `NVER` → `NV`
 - `THUNTS` → `TH`
 - `TOWNRS` → `TO`
-- `ALLNFTS` → `AN`
+- `ALLNFTS` → `ALLNFT`
 - `CVER` → `CV`
 - operator / locker composites → `OPKEY` / `LOCKR`
 
