@@ -70,7 +70,18 @@ fn image_uri_is_valid(uri: &String) -> bool {
     // SAFETY: `buf` is populated from a soroban_sdk::String via
     // copy_into_slice, so the bytes are guaranteed to be valid UTF-8.
     let text = unsafe { core::str::from_utf8_unchecked(&buf[..len as usize]) };
-    text.starts_with("https://") || text.starts_with("ipfs://")
+
+    if text.starts_with("https://") {
+        // Require at least one non-whitespace character after the scheme.
+        let authority = &text[8..];
+        return !authority.is_empty() && !authority.bytes().all(|b| b == b' ');
+    }
+    if text.starts_with("ipfs://") {
+        // Require CID of at least 46 chars (IPFS v0 base58) after "ipfs://".
+        let cid = &text[7..];
+        return cid.len() >= 46;
+    }
+    false
 }
 
 /// Complete metadata returned by get_nft_metadata (includes NftData-derived fields).
