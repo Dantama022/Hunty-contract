@@ -8025,11 +8025,7 @@ mod test {
     assert_eq!(stats.average_score, 6);
 }
 
-        // Try to complete the hunt — should fail with InvalidHuntStatus
-        env.mock_all_auths();
         let result = as_core_contract(&env, &contract_id, |env| {
-            HuntyCore::complete_hunt(env.clone(), hunt_id, player.clone())
-        let result = with_core_contract(&env, |env, _cid| {
             HuntyCore::is_blacklisted(env.clone(), creator.clone())
         });
         assert!(!result);

@@ -1593,11 +1593,7 @@ impl HuntyCore {
         admin: Address,
         creator: Address,
     ) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-        let stored_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-        if admin != stored_admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
         Storage::blacklist_creator(&env, &creator);
         env.events().publish(
             (Symbol::new(&env, "CreatorBlacklisted"), creator.clone()),
@@ -1613,11 +1609,7 @@ impl HuntyCore {
         admin: Address,
         creator: Address,
     ) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-        let stored_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-        if admin != stored_admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
         Storage::remove_from_blacklist(&env, &creator);
         env.events().publish(
             (
@@ -3117,12 +3109,7 @@ impl HuntyCore {
         admin: Address,
         new_admin: Address,
     ) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-
-        let current_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-        if current_admin != admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         // A pending rotation can be overwritten by the current admin at any time.
         Storage::set_pending_admin(&env, &new_admin);
@@ -3170,13 +3157,7 @@ impl HuntyCore {
         admin: Address,
         viewer: Address,
     ) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-
-        let configured_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-
-        if configured_admin != admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         Storage::add_global_view_only(&env, &viewer);
         Ok(())
@@ -3187,13 +3168,7 @@ impl HuntyCore {
         admin: Address,
         viewer: Address,
     ) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-
-        let configured_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-
-        if configured_admin != admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         Storage::remove_global_view_only(&env, &viewer);
         Ok(())
@@ -3209,72 +3184,42 @@ impl HuntyCore {
 
     // Pause controls
     pub fn pause_registrations(env: Env, admin: Address) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-
-        let configured_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-        if configured_admin != admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         Storage::set_pause_registrations(&env, true);
         Ok(())
     }
 
     pub fn unpause_registrations(env: Env, admin: Address) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-
-        let configured_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-        if configured_admin != admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         Storage::set_pause_registrations(&env, false);
         Ok(())
     }
 
     pub fn pause_answers(env: Env, admin: Address) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-
-        let configured_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-        if configured_admin != admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         Storage::set_pause_answers(&env, true);
         Ok(())
     }
 
     pub fn unpause_answers(env: Env, admin: Address) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-
-        let configured_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-        if configured_admin != admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         Storage::set_pause_answers(&env, false);
         Ok(())
     }
 
     pub fn pause_rewards(env: Env, admin: Address) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-
-        let configured_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-        if configured_admin != admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         Storage::set_pause_rewards(&env, true);
         Ok(())
     }
 
     pub fn unpause_rewards(env: Env, admin: Address) -> Result<(), HuntErrorCode> {
-        admin.require_auth();
-
-        let configured_admin = Storage::get_admin(&env).ok_or(HuntErrorCode::Unauthorized)?;
-        if configured_admin != admin {
-            return Err(HuntErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         Storage::set_pause_rewards(&env, false);
         Ok(())
