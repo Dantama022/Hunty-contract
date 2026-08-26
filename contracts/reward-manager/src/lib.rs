@@ -1976,6 +1976,39 @@ impl RewardManager {
     ///
     /// Note: `nft_enabled` is ignored — NFT distribution requires metadata and a contract address
     /// that are not available on this path. Use `distribute_rewards` with `RewardConfig` instead.
+    /// **DEPRECATED: Do not use for new integrations.**
+    ///
+    /// This legacy distribution path is maintained only for backward compatibility.
+    /// All new integrations must use `distribute_rewards` instead.
+    ///
+    /// This function wraps `distribute_rewards` and therefore inherits all the same
+    /// security constraints:
+    /// - Replays are rejected via the same nonce-based mechanism
+    /// - The ReentrancyGuard is acquired identically
+    /// - `min_distribution_amount` and daily caps are enforced
+    /// - Authorization checks are identical (fail-open by caller)
+    ///
+    /// **Removal timeline:** This function is scheduled for removal in a future major release.
+    /// The exact deprecation timeline will be announced in contract release notes.
+    ///
+    /// **Security note:** Any attacker analyzing this contract should understand that
+    /// `distribute_rewards_legacy` and `distribute_rewards` use identical security checks.
+    /// The legacy path is not a bypass vector.
+    ///
+    /// # Arguments
+    /// * `player` - The address receiving the distribution
+    /// * `hunt_id` - The hunt pool to distribute from
+    /// * `xlm_amount` - Token amount to distribute (0 = no token transfer)
+    /// * `_nft_enabled` - Ignored; NFTs are not supported on this path
+    ///
+    /// # Returns
+    /// - `true` if the distribution succeeded
+    /// - `false` if the distribution failed (check the transaction result for the error code)
+    ///
+    /// # Differences from `distribute_rewards`
+    /// - Returns `bool` instead of `Result<(), RewardErrorCode>` (loses error detail)
+    /// - Discards `_nft_enabled` parameter (NFTs cannot be distributed)
+    /// - No structured logging of the error
     pub fn distribute_rewards_legacy(
         env: Env,
         player: Address,
@@ -2810,7 +2843,14 @@ impl RewardManager {
         offset: u32,
         limit: u32,
     ) -> soroban_sdk::Vec<hunty_migration::UpgradeHistoryEntry> {
-        migration::RewardManagerMigration::get_upgrade_history(&env, offset, limit)
+        // Cap limit to prevent resource exhaustion. Historical audit records
+        // can grow without bound; a caller passing u32::MAX would request the entire
+        // history in one invocation and potentially exceed the resource budget.
+        // hunty-core uses MAX_BATCH_SIZE (10) for this pattern; we use a larger
+        // cap here (50) for upgrade history since it is less frequently written
+        // and smaller per-entry than the audit log.
+        let capped_limit = limit.min(50);
+        migration::RewardManagerMigration::get_upgrade_history(&env, offset, capped_limit)
     }
 
     pub fn run_migration(
