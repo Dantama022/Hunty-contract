@@ -923,6 +923,8 @@ impl RewardManager {
     /// Can only be called by the same creator that owns the pool.
     /// Uses the token address specified when the pool was created.
     pub fn refund_pool(env: Env, creator: Address, hunt_id: u64) -> Result<(), RewardErrorCode> {
+        creator.require_auth();
+
         let pool_config =
             Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
         if creator != pool_config.creator {
