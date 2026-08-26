@@ -8119,4 +8119,42 @@ mod test {
             _ => panic!("Expected CorruptPlayerProgress error"),
         }
     }
+ 
+    #[test]
+    fn test_normalize_and_hash_answer_whitespace_only() {
+        let env = Env::default();
+        env.ledger().set_timestamp(1_700_000_000);
+        let creator = Address::generate(&env);
+        let contract_id = env.register(HuntyCore, ());
+        let hunt_id = as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::create_hunt(
+                env.clone(),
+                creator.clone(),
+                String::from_str(env, "Whitespace Hunt"),
+                String::from_str(env, "Test whitespace answer"),
+                None,
+                None,
+                0,
+                None,
+            )
+            .unwrap()
+        });
+        env.mock_all_auths();
+        as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::add_clue(
+                env.clone(),
+                hunt_id,
+                String::from_str(env, "Question?"),
+                String::from_str(env, "valid"),
+                10,
+                true,
+                None,
+            )
+            .unwrap();
+        });
+        let result = as_core_contract(&env, &contract_id, |env| {
+            HuntyCore::normalize_and_hash_answer(&env, hunt_id, 1, &String::from_str(env, "   "))
+        });
+        assert_eq!(result, Err(HuntErrorCode::InvalidAnswer));
+    }
 }
