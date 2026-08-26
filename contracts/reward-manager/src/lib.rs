@@ -259,7 +259,12 @@ impl RewardManager {
 
     /// Initializes the RewardManager with the XLM token contract address (SAC).
     /// Must be called once before any reward distribution.
-    pub fn initialize(env: Env, admin: Address, xlm_token: Address) -> Result<(), RewardErrorCode> {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        xlm_token: Address,
+        hunty_core: Address,
+    ) -> Result<(), RewardErrorCode> {
         if Storage::get_xlm_token(&env).is_some() {
             return Err(RewardErrorCode::AlreadyInitialized);
         }
@@ -267,6 +272,7 @@ impl RewardManager {
         admin.require_auth();
         Storage::set_admin(&env, &admin);
         Storage::set_xlm_token(&env, &xlm_token);
+        Storage::set_hunty_core(&env, &hunty_core);
         Storage::set_contract_version(&env, Self::CONTRACT_VERSION);
         Ok(())
     }
@@ -415,13 +421,16 @@ impl RewardManager {
     /// * `token_address` - Address of the SAC-compatible token contract (e.g., XLM, USDC)
     /// * `min_distribution_amount` - Minimum token amount per distribution (0 for NFT-only pools)
     /// * `nft_contract` - Optional NFT contract address for NFT rewards
+    /// * `nft_royalty_bps` - Creator royalty basis points (0-10000) for secondary market sales
+    /// * `nft_transferable` - Whether reward NFTs from this pool are transferable
     ///
     /// # Errors
     /// * `PoolAlreadyExists` - A pool already exists for this hunt_id
     /// * `InvalidAmount` - min_distribution_amount is negative
     /// * `InvalidTokenContract` - token_address is not a valid SAC-compatible token
     /// * `InvalidConfig` - min_distribution_amount is 0 but no NFT contract provided
-    /// * `HuntNotFound` - hunt_id does not exist in HuntyCore (only when `set_hunty_core` has been called)
+    /// * `NotInitialized` - hunty_core has not been configured (set during initialize)
+    /// * `HuntNotFound` - hunt_id does not exist in HuntyCore
     pub fn create_reward_pool_with_nft(
         env: Env,
         creator: Address,
@@ -429,6 +438,8 @@ impl RewardManager {
         token_address: Address,
         min_distribution_amount: i128,
         nft_contract: Option<Address>,
+        nft_royalty_bps: u32,
+        nft_transferable: bool,
     ) -> Result<(), RewardErrorCode> {
         #[cfg(not(test))]
         creator.require_auth();
@@ -449,25 +460,26 @@ impl RewardManager {
         // Validate that the token_address is a valid SAC-compatible token contract
         TokenHandler::validate_token_contract(&env, &token_address)?;
 
-        // Validate hunt_id exists in HuntyCore when the core contract is configured.
-        // If not configured, hunt_id is caller-trusted (no cross-contract call is made).
-        if let Some(hunty_core) = Storage::get_hunty_core(&env) {
-            let mut args: Vec<Val> = Vec::new(&env);
-            args.push_back(hunt_id.into_val(&env));
-            // get_hunt_info returns Result<Hunt, HuntErrorCode>.
-            // We use Val as the success type to avoid importing Hunt from hunty-core.
-            // Any non-Ok(Ok(_)) result means the hunt doesn't exist or the call failed.
-            let hunt_exists = matches!(
-                env.try_invoke_contract::<Val, Val>(
-                    &hunty_core,
-                    &Symbol::new(&env, "get_hunt_info"),
-                    args
-                ),
-                Ok(Ok(_))
-            );
-            if !hunt_exists {
-                return Err(RewardErrorCode::HuntNotFound);
-            }
+        // Validate hunt_id exists in HuntyCore. hunty_core must be set during initialization.
+        // Fail closed: pool creation is rejected if hunty_core is not configured.
+        let hunty_core = Storage::get_hunty_core(&env)
+            .ok_or(RewardErrorCode::NotInitialized)?;
+        
+        let mut args: Vec<Val> = Vec::new(&env);
+        args.push_back(hunt_id.into_val(&env));
+        // get_hunt_info returns Result<Hunt, HuntErrorCode>.
+        // We use Val as the success type to avoid importing Hunt from hunty-core.
+        // Any non-Ok(Ok(_)) result means the hunt doesn't exist or the call failed.
+        let hunt_exists = matches!(
+            env.try_invoke_contract::<Val, Val>(
+                &hunty_core,
+                &Symbol::new(&env, "get_hunt_info"),
+                args
+            ),
+            Ok(Ok(_))
+        );
+        if !hunt_exists {
+            return Err(RewardErrorCode::HuntNotFound);
         }
 
         let config = RewardPoolConfig {
@@ -483,6 +495,8 @@ impl RewardManager {
             distribution_mode: DistributionMode::Fixed,
             vesting_period_secs: 0,
             claim_deadline: 0,
+            nft_royalty_bps,
+            nft_transferable,
         };
         Storage::set_pool_config(&env, hunt_id, &config);
 
@@ -516,18 +530,23 @@ impl RewardManager {
     /// * `hunt_id` - The hunt this pool is for
     /// * `token_address` - Address of the SAC-compatible token contract (e.g., XLM, USDC)
     /// * `min_distribution_amount` - Minimum token amount per distribution (0 = no minimum)
+    /// * `nft_royalty_bps` - Creator royalty basis points (0-10000) for secondary market sales
+    /// * `nft_transferable` - Whether reward NFTs from this pool are transferable
     ///
     /// # Errors
     /// * `PoolAlreadyExists` - A pool already exists for this hunt_id
     /// * `InvalidAmount` - min_distribution_amount is negative
     /// * `InvalidTokenContract` - token_address is not a valid SAC-compatible token
-    /// * `HuntNotFound` - hunt_id does not exist in HuntyCore (only when `set_hunty_core` has been called)
+    /// * `NotInitialized` - hunty_core has not been configured (set during initialize)
+    /// * `HuntNotFound` - hunt_id does not exist in HuntyCore
     pub fn create_reward_pool(
         env: Env,
         creator: Address,
         hunt_id: u64,
         token_address: Address,
         min_distribution_amount: i128,
+        nft_royalty_bps: u32,
+        nft_transferable: bool,
     ) -> Result<(), RewardErrorCode> {
         Self::create_reward_pool_with_nft(
             env,
@@ -536,6 +555,8 @@ impl RewardManager {
             token_address,
             min_distribution_amount,
             None,
+            nft_royalty_bps,
+            nft_transferable,
         )
     }
 
@@ -1519,6 +1540,9 @@ impl RewardManager {
                 reward_config.nft_hunt_title.clone(),
                 reward_config.nft_rarity,
                 reward_config.nft_tier,
+                &pool_config.creator,
+                pool_config.nft_royalty_bps,
+                pool_config.nft_transferable,
             ) {
                 Ok(id) => nft_id = Some(id),
                 Err(_) => {
@@ -1829,6 +1853,9 @@ impl RewardManager {
                     .cloned()
                     .or_else(|| Storage::get_nft_contract(&env))
                     .ok_or(RewardErrorCode::InvalidConfig)?;
+                
+                let pool_config = Storage::get_pool_config(&env, entry.hunt_id)
+                    .ok_or(RewardErrorCode::PoolNotFound)?;
 
                 match NftHandler::distribute_nft(
                     &env,
@@ -1841,6 +1868,9 @@ impl RewardManager {
                     entry.reward_config.nft_hunt_title.clone(),
                     entry.reward_config.nft_rarity,
                     entry.reward_config.nft_tier,
+                    &pool_config.creator,
+                    pool_config.nft_royalty_bps,
+                    pool_config.nft_transferable,
                 ) {
                     Ok(id) => nft_id = Some(id),
                     Err(_) => {
@@ -1942,6 +1972,9 @@ impl RewardManager {
 
         let pending = Storage::get_pending_nft_mint(&env, hunt_id, &player)
             .ok_or(RewardErrorCode::NftMintPendingNotFound)?;
+        
+        let pool_config = Storage::get_pool_config(&env, hunt_id)
+            .ok_or(RewardErrorCode::PoolNotFound)?;
 
         let nft_id = NftHandler::distribute_nft(
             &env,
@@ -1954,6 +1987,9 @@ impl RewardManager {
             pending.nft_hunt_title,
             pending.nft_rarity,
             pending.nft_tier,
+            &pool_config.creator,
+            pool_config.nft_royalty_bps,
+            pool_config.nft_transferable,
         )?;
 
         if let Some(mut record) = Storage::get_distribution_record(&env, hunt_id, &player) {

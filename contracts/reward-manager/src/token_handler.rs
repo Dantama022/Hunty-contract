@@ -69,7 +69,6 @@ impl TokenHandler {
     /// # Returns
     /// * `true` if the contract has sufficient balance
     /// * `false` otherwise
-    #[allow(dead_code)]
     pub fn validate_pool(
         env: &Env,
         token_address: &Address,
@@ -89,7 +88,6 @@ impl TokenHandler {
     ///
     /// # Returns
     /// The current token balance
-    #[allow(dead_code)]
     pub fn get_balance(env: &Env, token_address: &Address, contract_addr: &Address) -> i128 {
         let client = token::Client::new(env, token_address);
         client.balance(contract_addr)
