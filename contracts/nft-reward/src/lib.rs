@@ -3,6 +3,9 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Map,
     String, Symbol, Val, Vec,
 };
+use hunty_common::audit::{
+    emit_audit_event, detail, ACTION_ADMIN_ADDED, ACTION_ADMIN_REMOVED, TOPIC_AUDIT,
+};
 
 const MAX_URI_LEN: usize = 512;
 const MAX_NFT_TITLE_BYTES: u32 = 128;
@@ -199,6 +202,43 @@ pub struct NftBurnedEvent {
     pub owner: Address,
 }
 
+/// Event emitted on contract initialization with admin, minter, and max supply details.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractInitializedEvent {
+    pub admin: Address,
+    pub minter: Address,
+    pub max_supply: Option<u64>,
+    pub timestamp: u64,
+}
+
+/// Event emitted when an authorized contract is added.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorizedContractAddedEvent {
+    pub admin: Address,
+    pub contract: Address,
+    pub timestamp: u64,
+}
+
+/// Event emitted when an authorized contract is removed.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorizedContractRemovedEvent {
+    pub admin: Address,
+    pub contract: Address,
+    pub timestamp: u64,
+}
+
+/// Event emitted when the reward manager contract is set.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RewardManagerSetEvent {
+    pub admin: Address,
+    pub reward_manager: Address,
+    pub timestamp: u64,
+}
+
 mod errors;
 pub use errors::NftErrorCode;
 mod migration;
@@ -237,6 +277,19 @@ impl NftReward {
         Storage::save_collection_metadata(&env, &collection_metadata);
         Storage::mark_initialized(&env);
         Storage::set_contract_version(&env, CONTRACT_VERSION);
+
+        // Emit initialization event
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (symbol_short!("INIT"), admin.clone()),
+            ContractInitializedEvent {
+                admin: admin.clone(),
+                minter: minter.clone(),
+                max_supply,
+                timestamp,
+            },
+        );
+
         Ok(())
     }
 
@@ -656,6 +709,18 @@ impl NftReward {
     ) -> Result<(), crate::errors::NftErrorCode> {
         Self::require_admin(&env, &admin)?;
         Storage::save_reward_manager(&env, &reward_manager);
+
+        // Emit event for audit trail
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (symbol_short!("RWD_MGR"), admin.clone()),
+            RewardManagerSetEvent {
+                admin: admin.clone(),
+                reward_manager: reward_manager.clone(),
+                timestamp,
+            },
+        );
+
         Ok(())
     }
 
@@ -667,6 +732,18 @@ impl NftReward {
     ) -> Result<(), crate::errors::NftErrorCode> {
         Self::require_admin(&env, &admin)?;
         Storage::add_authorized_contract(&env, &contract);
+
+        // Emit event for audit trail
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (symbol_short!("AUTH_ADD"), admin.clone()),
+            AuthorizedContractAddedEvent {
+                admin: admin.clone(),
+                contract: contract.clone(),
+                timestamp,
+            },
+        );
+
         Ok(())
     }
 
@@ -678,9 +755,20 @@ impl NftReward {
     ) -> Result<(), crate::errors::NftErrorCode> {
         Self::require_admin(&env, &admin)?;
         Storage::remove_authorized_contract(&env, &contract);
+
+        // Emit event for audit trail
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (symbol_short!("AUTH_REM"), admin.clone()),
+            AuthorizedContractRemovedEvent {
+                admin: admin.clone(),
+                contract: contract.clone(),
+                timestamp,
+            },
+        );
+
         Ok(())
     }
-
     /// Batch-updates image URIs for all NFTs whose `image_uri` starts with `old_prefix`,
     /// replacing it with `new_prefix`. Useful for migrating between IPFS gateways or CDNs.
     ///

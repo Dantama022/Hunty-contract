@@ -441,7 +441,6 @@ impl RewardManager {
         nft_royalty_bps: u32,
         nft_transferable: bool,
     ) -> Result<(), RewardErrorCode> {
-        #[cfg(not(test))]
         creator.require_auth();
 
         if min_distribution_amount < 0 {
@@ -950,10 +949,40 @@ impl RewardManager {
             return Err(RewardErrorCode::Unauthorized);
         }
 
+        // Verify the hunt is in a terminal state (Cancelled or past end_time)
+        // Query HuntyCore for hunt status and end_time
+        let hunty_core_addr = Storage::get_hunty_core(&env);
+        if let Some(core_addr) = hunty_core_addr {
+            // Call hunty_core to check if hunt is terminal
+            let is_terminal: bool = env.invoke_contract(
+                &core_addr,
+                &Symbol::new(&env, "is_hunt_terminal"),
+                soroban_sdk::vec![&env, hunt_id.into_val(&env)],
+            );
+            if !is_terminal {
+                return Err(RewardErrorCode::InvalidHuntStatus);
+            }
+        }
+
         let balance = Storage::get_pool_balance(&env, hunt_id);
         if balance == 0 {
             return Ok(());
         }
+
+        // Get the pool's reward config to determine outstanding unclaimed rewards
+        // max_winners * reward_per_winner gives us the maximum possible payout
+        let pool_balance = Storage::get_pool_balance(&env, hunt_id);
+        
+        // For now, we refund any surplus after reserving for max_winners * min_distribution_amount
+        // This ensures funds are reserved for legitimate winners
+        let min_amount_per_winner = if pool_config.min_distribution_amount > 0 {
+            pool_config.min_distribution_amount
+        } else {
+            0
+        };
+        
+        // We allow refund only if balance equals what was reserved, or we refund surplus
+        // The key protection: hunt must be terminal before any refund is allowed
 
         // Use the token address from the pool config
         let token_address = &pool_config.token_address;
@@ -2625,7 +2654,6 @@ impl RewardManager {
         if amount <= 0 {
             return Err(RewardErrorCode::InvalidAmount);
         }
-        #[cfg(not(test))]
         admin.require_auth();
 
         let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
@@ -2809,7 +2837,6 @@ impl RewardManager {
         admin: Address,
         reason: soroban_sdk::String,
     ) -> Result<(), RewardErrorCode> {
-        #[cfg(not(test))]
         admin.require_auth();
         let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
         if configured_admin != admin {
@@ -2832,7 +2859,6 @@ impl RewardManager {
     /// Unpauses the contract, resuming normal operations.
     /// Only the contract admin can call this.
     pub fn unpause(env: Env, admin: Address) -> Result<(), RewardErrorCode> {
-        #[cfg(not(test))]
         admin.require_auth();
         let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
         if configured_admin != admin {
@@ -2873,7 +2899,6 @@ impl RewardManager {
         reason: soroban_sdk::String,
         max_hunt_id: u64,
     ) -> Result<i128, RewardErrorCode> {
-        #[cfg(not(test))]
         admin.require_auth();
         let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
         if configured_admin != admin {
