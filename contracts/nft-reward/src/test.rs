@@ -1406,3 +1406,58 @@ fn test_search_nfts_no_matches() {
 
     assert_eq!(results.len(), 0);
 }
+
+#[test]
+fn test_propose_upgrade_emits_upgrade_proposed_event() {
+    let env = setup_env();
+    let contract_id = env.register_contract(None, NftReward);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let client = NftRewardClient::new(&env, &contract_id);
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
+    client.initialize_schema(&admin);
+
+    let proposal = client.propose_upgrade(&admin, &1);
+
+    let events = env.events().all();
+    assert!(!events.is_empty());
+    let (_contract, topics, data): (Address, soroban_sdk::Vec<Val>, Val) =
+        events.get(events.len() - 1).unwrap();
+    assert_eq!(
+        Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+        Symbol::new(&env, "UpgradeProposed")
+    );
+
+    let event = hunty_migration::UpgradeProposedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(event.target_version, 1);
+    assert_eq!(event.proposer, admin);
+    assert_eq!(event.proposed_at, 1000);
+    assert_eq!(proposal.target_version, 1);
+}
+
+#[test]
+fn test_run_migration_dry_run_does_not_emit_upgrade_executed() {
+    let env = setup_env();
+    let contract_id = env.register_contract(None, NftReward);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    let client = NftRewardClient::new(&env, &contract_id);
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
+    client.initialize_schema(&admin);
+    client.propose_upgrade(&admin, &3);
+
+    let report = client.run_migration(&admin, &3, &true);
+    assert!(report.succeeded);
+    assert!(report.dry_run);
+
+    let events = env.events().all();
+    for i in 0..events.len() {
+        let (_contract, topics, _data): (Address, soroban_sdk::Vec<Val>, Val) =
+            events.get(i).unwrap();
+        if topics.len() > 0 {
+            if let Ok(sym) = Symbol::try_from_val(&env, &topics.get(0).unwrap()) {
+                assert_ne!(sym, Symbol::new(&env, "UpgradeExecuted"));
+            }
+        }
+    }
+}

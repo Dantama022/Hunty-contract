@@ -11,8 +11,12 @@ const MAX_NFT_URI_BYTES: u32 = 512;
 const MAX_EXTENSION_FIELDS: u32 = 10;
 const MAX_EXTENSION_KEY_BYTES: u32 = 64;
 const MAX_EXTENSION_VALUE_BYTES: u32 = 512;
-/// Maximum number of NFTs to return in a single scan query (pagination cap).
-const MAX_SCAN_LIMIT: u32 = 1000;
+/// Maximum NFTs returned by a single scan/list query.
+///
+/// Matches hunty-core's `MAX_LEADERBOARD_SCAN_SIZE` / `MAX_HUNT_SEARCH_SCAN_SIZE`
+/// (200). `MAX_BATCH_SIZE` (50) is the tighter write-batch cap used elsewhere;
+/// 200 is the read-scan cap so listing stays inside a similar gas budget.
+const MAX_SCAN_LIMIT: u32 = 200;
 
 /// Core display metadata for an NFT (title, description, image URI).
 /// Supports off-chain storage references to keep gas costs low.
@@ -872,7 +876,7 @@ impl NftReward {
     /// Lists all NFTs minted by the contract with pagination support.
     ///
     /// Returns a vector of NftData structs, paginated by offset and limit.
-    /// The limit is bounded to MAX_SCAN_LIMIT (1000) to prevent excessive gas consumption.
+    /// The limit is bounded to MAX_SCAN_LIMIT (200) to prevent excessive gas consumption.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment
@@ -1135,13 +1139,14 @@ impl NftReward {
         if offset >= len {
             return Vec::new(&env);
         }
-        let end = offset.saturating_add(limit).min(len);
+        let bounded_limit = limit.min(MAX_SCAN_LIMIT);
+        let end = offset.saturating_add(bounded_limit).min(len);
         nfts.slice(offset..end)
     }
 
     /// Returns paginated NFT IDs minted for a hunt.
     pub fn get_nfts_by_hunt(env: Env, hunt_id: u64, offset: u32, limit: u32) -> Vec<u64> {
-        Storage::get_hunt_nfts(&env, hunt_id, offset, limit)
+        Storage::get_hunt_nfts(&env, hunt_id, offset, limit.min(MAX_SCAN_LIMIT))
     }
 
     /// Returns the total number of NFTs minted for a hunt.
@@ -1190,5 +1195,90 @@ impl NftReward {
         );
 
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------------
+    // Schema Migration
+    // -----------------------------------------------------------------------------
+
+    pub fn get_schema_version(env: Env) -> u32 {
+        migration::NftRewardMigration::get_schema_version(&env)
+    }
+
+    pub fn initialize_schema(env: Env, admin: Address) {
+        admin.require_auth();
+        migration::NftRewardMigration::initialize_schema(&env, &admin);
+    }
+
+    pub fn propose_upgrade(
+        env: Env,
+        admin: Address,
+        target_version: u32,
+    ) -> Result<hunty_migration::UpgradeProposal, hunty_migration::UpgradeAuthError> {
+        let proposal =
+            migration::NftRewardMigration::propose_upgrade(&env, &admin, target_version)?;
+        env.events().publish(
+            migration::NftRewardMigration::upgrade_proposed_topic(&env),
+            migration::NftRewardMigration::upgrade_proposed_event(&proposal),
+        );
+        Ok(proposal)
+    }
+
+    pub fn set_upgrade_timelock(
+        env: Env,
+        admin: Address,
+        delay_seconds: u64,
+    ) -> Result<(), hunty_migration::UpgradeAuthError> {
+        migration::NftRewardMigration::set_upgrade_timelock(&env, &admin, delay_seconds)
+    }
+
+    pub fn get_upgrade_proposal(env: Env) -> Option<hunty_migration::UpgradeProposal> {
+        migration::NftRewardMigration::get_upgrade_proposal(&env)
+    }
+
+    pub fn get_upgrade_timelock(env: Env) -> u64 {
+        migration::NftRewardMigration::get_upgrade_timelock(&env)
+    }
+
+    pub fn get_upgrade_history(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<hunty_migration::UpgradeHistoryEntry> {
+        migration::NftRewardMigration::get_upgrade_history(&env, offset, limit.min(MAX_SCAN_LIMIT))
+    }
+
+    pub fn run_migration(
+        env: Env,
+        admin: Address,
+        target_version: u32,
+        dry_run: bool,
+    ) -> Result<migration::MigrationReport, hunty_migration::UpgradeAuthError> {
+        let from_version = migration::NftRewardMigration::get_schema_version(&env);
+        let report = migration::NftRewardMigration::run_migration(
+            &env,
+            &admin,
+            target_version,
+            dry_run,
+        )?;
+        if !dry_run && report.succeeded && report.from_version < report.to_version {
+            env.events().publish(
+                migration::NftRewardMigration::upgrade_executed_topic(&env),
+                migration::NftRewardMigration::upgrade_executed_event(
+                    from_version,
+                    report.to_version,
+                    env.ledger().timestamp(),
+                    admin,
+                ),
+            );
+        }
+        Ok(report)
+    }
+
+    pub fn rollback_migration(
+        env: Env,
+        admin: Address,
+    ) -> Result<migration::MigrationReport, hunty_migration::UpgradeAuthError> {
+        migration::NftRewardMigration::rollback_migration(&env, &admin)
     }
 }
