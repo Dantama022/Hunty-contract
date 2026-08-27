@@ -418,6 +418,18 @@ impl RewardManager {
         Ok(())
     }
 
+    fn require_authorized_distributor(env: &Env) -> Result<(), RewardErrorCode> {
+        let caller = env.invoker();
+        caller.require_auth();
+
+        if !Storage::has_authorized_contracts(env) || !Storage::is_authorized_contract(env, &caller)
+        {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+
+        Ok(())
+    }
+
     /// Adds a contract to the authorized callers list for `distribute_rewards`.
     /// Only the contract admin can call this.
     pub fn add_authorized_contract(
@@ -1475,6 +1487,8 @@ impl RewardManager {
         player_address: Address,
         reward_config: RewardConfig,
     ) -> Result<(), RewardErrorCode> {
+        Self::require_authorized_distributor(&env)?;
+
         // Issue #628: distribution is blocked by its own pause flag or the global stop.
         Self::ensure_distribution_allowed(&env)?;
 
@@ -1558,9 +1572,11 @@ impl RewardManager {
             &DistributionRecord { xlm_amount, nft_id },
         );
 
-        // Now proceed with actual transfers and other mutations
-        let pool_config =
-            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
+        // Now proceed with actual XLM transfers and other mutations.
+        if reward_config.has_xlm() {
+            let amount = reward_config.xlm_amount.unwrap();
+            let pool_config =
+                Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
 
             // Use the token address from the pool config
             let token_address = &pool_config.token_address;
@@ -1812,6 +1828,8 @@ impl RewardManager {
         env: Env,
         distributions: Vec<BatchDistributionEntry>,
     ) -> Result<(), RewardErrorCode> {
+        Self::require_authorized_distributor(&env)?;
+
         // Issue #628: one check for the whole batch — a paused contract must not
         // distribute any entry, not merely stop partway through.
         Self::ensure_distribution_allowed(&env)?;
@@ -2177,7 +2195,7 @@ impl RewardManager {
     /// - Replays are rejected via the same nonce-based mechanism
     /// - The ReentrancyGuard is acquired identically
     /// - `min_distribution_amount` and daily caps are enforced
-    /// - Authorization checks are identical (fail-open by caller)
+    /// - Authorization is fail-closed: the immediate invoker must be an approved contract and the allowlist must not be empty
     ///
     /// **Removal timeline:** This function is scheduled for removal in a future major release.
     /// The exact deprecation timeline will be announced in contract release notes.

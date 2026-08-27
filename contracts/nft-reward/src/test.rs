@@ -226,6 +226,38 @@ fn test_collection_metadata_is_set_during_initialization_and_updates_supply() {
 }
 
 #[test]
+fn test_mint_reward_nft_rejects_empty_image_uri_consistently() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+    let player = Address::generate(&env);
+
+    let empty_metadata = create_metadata(&env, "Hunt Champion", "Completed the City Hunt", "");
+    let direct_err = client
+        .try_mint_reward_nft(&minter, &1, &player, &empty_metadata)
+        .unwrap_err();
+    assert_eq!(direct_err, Ok(NftErrorCode::InvalidMetadata));
+
+    let mut map: Map<Symbol, Val> = Map::new(&env);
+    map.set(
+        Symbol::new(&env, "title"),
+        String::from_str(&env, "Hunt Champion").into_val(&env),
+    );
+    map.set(
+        Symbol::new(&env, "description"),
+        String::from_str(&env, "Completed the City Hunt").into_val(&env),
+    );
+    map.set(
+        Symbol::new(&env, "image_uri"),
+        String::from_str(&env, "").into_val(&env),
+    );
+
+    let map_err = client
+        .try_mint_reward_nft_from_map(&minter, &1, &player, &map)
+        .unwrap_err();
+    assert_eq!(map_err, Ok(NftErrorCode::InvalidMetadata));
+}
+
+#[test]
 fn test_mint_reward_nft() {
     let env = setup_env();
     let (client, minter) = setup_nft_reward(&env, None);
@@ -1086,6 +1118,17 @@ fn test_mint_reward_nft_from_map_with_invalid_types_uses_defaults() {
     assert_eq!(nft.metadata.rarity, 0u32); // default due to invalid type
     assert_eq!(nft.metadata.tier, 0u32); // default due to invalid type
     assert_eq!(nft.transferable, false); // default due to invalid type
+
+    // Test for the new function
+    let nft_id_invalid = client.mint_reward_nft_from_map(&player, &1, &player, &metadata);
+    let nft_invalid = client.get_nft(&nft_id_invalid).unwrap();
+    assert_eq!(nft_invalid.metadata.title, String::from_str(&env, "Valid Title"));
+    assert_eq!(nft_invalid.metadata.image_uri, String::from_str(&env, "ipfs://valid"));
+    assert_eq!(nft_invalid.metadata.description, String::from_str(&env, ""));
+    assert_eq!(nft_invalid.metadata.hunt_title, String::from_str(&env, "Valid Title"));
+    assert_eq!(nft_invalid.metadata.rarity, 0u32);
+    assert_eq!(nft_invalid.metadata.tier, 0u32);
+    assert_eq!(nft_invalid.transferable, false);
 }
 
 // =========================================================================
@@ -1605,6 +1648,35 @@ fn test_initialize_requires_admin_authorization() {
 }
 
 #[test]
+#[should_panic]
+fn test_initialize_panics_without_admin_auth() {
+    // No mocked auth: initialize must require admin authorization and thus panic
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let contract_id = env.register_contract(None, NftReward);
+    let client = NftRewardClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    // This should panic because `admin.require_auth()` will fail
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
+}
+
+#[test]
+fn test_initialize_succeeds_with_admin_auth() {
+    // With mocked auth, initialization should succeed and store admin/minter
+    let env = setup_env(); // setup_env mocks auth
+    let contract_id = env.register_contract(None, NftReward);
+    let client = NftRewardClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
+
+    assert_eq!(client.get_admin(), Some(admin));
+}
+
+#[test]
 fn test_add_authorized_contract_requires_admin_authorization() {
     let env = setup_env();
     let (client, _) = setup_nft_reward(&env, None);
@@ -1630,4 +1702,34 @@ fn test_add_authorized_contract_requires_admin_authorization() {
         // The event should have been published with the attacker's address in the topics
         assert!(auth_events.len() > 0 || result.is_err(), "Expected either event or error");
     }
+}
+
+#[test]
+fn test_unauthorized_cannot_mint_before_and_after_init() {
+    // Do NOT mock auth here — we expect unauthorized addresses to fail.
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let contract_id = env.register_contract(None, NftReward);
+    let client = NftRewardClient::new(&env, &contract_id);
+
+    let arbitrary = Address::generate(&env);
+    let player = Address::generate(&env);
+    let metadata = create_metadata(&env, "Guarded", "Desc", "ipfs://x");
+
+    // Before initialization: minting by an arbitrary address without auth should fail
+    let pre_init = std::panic::catch_unwind(|| {
+        client.mint_reward_nft(&arbitrary, &1, &player, &metadata);
+    });
+    assert!(pre_init.is_err());
+
+    // Initialize the contract with a distinct minter
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
+
+    // After initialization: the arbitrary address should still not be able to mint
+    let post_init = std::panic::catch_unwind(|| {
+        client.mint_reward_nft(&arbitrary, &1, &player, &metadata);
+    });
+    assert!(post_init.is_err());
 }
