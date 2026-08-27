@@ -4,7 +4,7 @@ extern crate std;
 
 use crate::{
     CollectionMetadata, NftErrorCode, NftMetadata, NftMintedEvent, NftReward, NftRewardClient,
-    METADATA_SCHEMA_VERSION,
+    MAX_SCAN_LIMIT, METADATA_SCHEMA_VERSION,
 };
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
@@ -154,7 +154,7 @@ fn mint_transferable(
         metadata.hunt_title.clone().into_val(env),
     );
     map.set(Symbol::new(env, "transferable"), true.into_val(env));
-    client.mint_reward_nft_from_map(&minter, &hunt_id, owner, &map)
+    client.mint_reward_nft_from_map(&minter, &hunt_id, owner, &map).unwrap()
 }
 
 // =========================================================================
@@ -380,7 +380,7 @@ fn test_soulbound_nft_cannot_be_transferred() {
     );
     metadata_map.set(Symbol::new(&env, "transferable"), false.into_val(&env));
 
-    let nft_id = client.mint_reward_nft_from_map(&minter, &1, &owner, &metadata_map);
+    let nft_id = client.mint_reward_nft_from_map(&minter, &1, &owner, &metadata_map).unwrap();
     let err = client
         .try_transfer_nft(&nft_id, &owner, &recipient, &owner)
         .unwrap_err();
@@ -559,7 +559,7 @@ fn test_mint_from_map_then_query_metadata() {
     metadata_map.set(Symbol::new(&env, "rarity"), 2u32.into_val(&env));
     metadata_map.set(Symbol::new(&env, "tier"), 7u32.into_val(&env));
 
-    let nft_id = client.mint_reward_nft_from_map(&reward_manager, &7, &player, &metadata_map);
+    let nft_id = client.mint_reward_nft_from_map(&reward_manager, &7, &player, &metadata_map).unwrap();
     let meta = client.get_nft_metadata(&nft_id).unwrap();
 
     assert_eq!(meta.nft_id, nft_id);
@@ -640,7 +640,6 @@ fn test_transfer_nft_success() {
     client.transfer_nft(&nft_id, &from, &to, &from);
 
     assert_eq!(client.owner_of(&nft_id), Some(to.clone()));
-    assert_eq!(client.get_nft_owner(&nft_id), Some(to.clone()));
 
     let nft = client.get_nft(&nft_id).unwrap();
     assert_eq!(nft.owner, to);
@@ -762,17 +761,17 @@ fn test_get_player_nfts_empty_for_new_address() {
 }
 
 #[test]
-fn test_get_nft_owner_matches_owner_of() {
+fn test_owner_of_returns_nft_owner() {
     let env = setup_env();
     let (client, minter) = setup_nft_reward(&env, None);
 
     let player = Address::generate(&env);
-    let metadata = create_metadata(&env, "Alias Test", "Desc", "ipfs://alias");
+    let metadata = create_metadata(&env, "OwnerOf Test", "Desc", "ipfs://test");
 
     let nft_id = client.mint_reward_nft(&minter, &1, &player, &metadata);
 
-    assert_eq!(client.owner_of(&nft_id), client.get_nft_owner(&nft_id));
-    assert_eq!(client.get_nft_owner(&nft_id), Some(player));
+    assert_eq!(client.owner_of(&nft_id), Some(player));
+    assert_eq!(client.owner_of(&999), None);
 }
 
 #[test]
@@ -871,7 +870,7 @@ fn test_mint_from_map_with_creator_and_royalty() {
     metadata.set(Symbol::new(&env, "creator"), creator.clone().into_val(&env));
     metadata.set(Symbol::new(&env, "royalty_bps"), 500u32.into_val(&env));
 
-    let nft_id = client.mint_reward_nft_from_map(&creator, &1, &player, &metadata);
+    let nft_id = client.mint_reward_nft_from_map(&creator, &1, &player, &metadata).unwrap();
 
     let nft = client.get_nft(&nft_id).unwrap();
     assert_eq!(nft.metadata.creator, Some(creator.clone()));
@@ -897,7 +896,7 @@ fn test_mint_from_map_creator_defaults_to_player() {
         String::from_str(&env, "ipfs://default").into_val(&env),
     );
 
-    let nft_id = client.mint_reward_nft_from_map(&player, &1, &player, &metadata);
+    let nft_id = client.mint_reward_nft_from_map(&player, &1, &player, &metadata).unwrap();
 
     let nft = client.get_nft(&nft_id).unwrap();
     // When creator is not specified in map, it defaults to player_address
@@ -1053,7 +1052,7 @@ fn test_mint_reward_nft_from_map_with_missing_keys_uses_defaults() {
         String::from_str(&env, "ipfs://defaults").into_val(&env),
     );
 
-    let nft_id = client.mint_reward_nft_from_map(&player, &1, &player, &metadata);
+    let nft_id = client.mint_reward_nft_from_map(&player, &1, &player, &metadata).unwrap();
 
     let nft = client.get_nft(&nft_id).unwrap();
     assert_eq!(nft.metadata.title, String::from_str(&env, "Test NFT"));
@@ -1069,46 +1068,36 @@ fn test_mint_reward_nft_from_map_with_missing_keys_uses_defaults() {
 }
 
 #[test]
-fn test_mint_reward_nft_from_map_with_invalid_types_uses_defaults() {
+fn test_mint_reward_nft_from_map_present_wrong_type_returns_invalid_metadata() {
     let env = setup_env();
     let client = NftRewardClient::new(&env, &env.register_contract(None, NftReward));
 
     let player = Address::generate(&env);
-    let mut metadata: Map<Symbol, Val> = Map::new(&env);
 
-    // Provide valid title
+    // --- rarity: present as String instead of u32 ---
+    let mut metadata: Map<Symbol, Val> = Map::new(&env);
     metadata.set(
         Symbol::new(&env, "title"),
         String::from_str(&env, "Valid Title").into_val(&env),
     );
-
-    // Provide a valid image_uri (required to be non-empty and well-formed)
     metadata.set(
         Symbol::new(&env, "image_uri"),
         String::from_str(&env, "ipfs://valid").into_val(&env),
     );
-
-    // Provide invalid types for other fields (wrong type conversions will fail and use defaults)
-    metadata.set(Symbol::new(&env, "description"), 123456u32.into_val(&env)); // u32 instead of String
-    metadata.set(Symbol::new(&env, "hunt_title"), 999u32.into_val(&env)); // u32 instead of String
     metadata.set(
         Symbol::new(&env, "rarity"),
-        String::from_str(&env, "invalid").into_val(&env),
-    ); // String instead of u32
-    metadata.set(
-        Symbol::new(&env, "tier"),
-        String::from_str(&env, "invalid").into_val(&env),
-    ); // String instead of u32
-    metadata.set(Symbol::new(&env, "transferable"), 123u32.into_val(&env)); // u32 instead of bool
+        String::from_str(&env, "epic").into_val(&env), // String, not u32
+    );
 
-    // This should not panic; invalid types should use defaults
-    let nft_id = client.mint_reward_nft_from_map(&player, &1, &player, &metadata);
+    let res = client.try_mint_reward_nft_from_map(&player, &1, &player, &metadata);
+    assert_eq!(res, Err(Ok(NftErrorCode::InvalidMetadata)),
+        "present rarity with wrong type must fail with InvalidMetadata");
 
-    let nft = client.get_nft(&nft_id).unwrap();
-    assert_eq!(nft.metadata.title, String::from_str(&env, "Valid Title"));
-    assert_eq!(
-        nft.metadata.image_uri,
-        String::from_str(&env, "ipfs://valid")
+    // --- image_uri: present as u32 instead of String ---
+    let mut metadata2: Map<Symbol, Val> = Map::new(&env);
+    metadata2.set(
+        Symbol::new(&env, "title"),
+        String::from_str(&env, "Valid Title").into_val(&env),
     );
     assert_eq!(nft.metadata.description, String::from_str(&env, "")); // default due to invalid type
     assert_eq!(

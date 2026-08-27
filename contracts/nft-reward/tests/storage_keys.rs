@@ -72,7 +72,7 @@ fn mint_transferable(
         metadata.hunt_title.clone().into_val(env),
     );
     map.set(Symbol::new(env, "transferable"), true.into_val(env));
-    client.mint_reward_nft_from_map(minter, &hunt_id, owner, &map)
+    client.mint_reward_nft_from_map(minter, &hunt_id, owner, &map).unwrap()
 }
 
 #[test]
@@ -158,4 +158,53 @@ fn test_contract_operator_approve_revoke_and_transfer() {
 
     client.remove_operator(&owner, &operator);
     assert!(!client.is_operator(&owner, &operator));
+}
+
+#[test]
+fn test_owner_hunt_index_lifecycle_mint_transfer_burn() {
+    let env = setup_env();
+    let (client, minter, _contract_id) = setup_client(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    assert!(!client.has_hunt_nft(&alice, &42));
+    assert!(!client.has_hunt_nft(&bob, &42));
+
+    // Mint 2 NFTs for hunt 42 to Alice
+    let nft1 = mint_transferable(&env, &client, &minter, 42, &alice, "Hunt 42 A");
+    let nft2 = mint_transferable(&env, &client, &minter, 42, &alice, "Hunt 42 B");
+
+    assert!(client.has_hunt_nft(&alice, &42));
+    assert!(!client.has_hunt_nft(&bob, &42));
+
+    // Transfer 1 NFT to Bob
+    client.transfer_nft(&nft1, &alice, &bob, &alice);
+    assert!(client.has_hunt_nft(&alice, &42));
+    assert!(client.has_hunt_nft(&bob, &42));
+
+    // Burn Alice's remaining NFT for hunt 42
+    client.burn_nft(&nft2, &alice);
+    assert!(!client.has_hunt_nft(&alice, &42));
+    assert!(client.has_hunt_nft(&bob, &42));
+
+    // Burn Bob's NFT
+    client.burn_nft(&nft1, &bob);
+    assert!(!client.has_hunt_nft(&bob, &42));
+}
+
+#[test]
+fn test_get_player_nfts_bounded_by_max_scan_limit() {
+    let env = setup_env();
+    let (client, minter, _contract_id) = setup_client(&env);
+    let owner = Address::generate(&env);
+
+    for i in 1..=10 {
+        mint_transferable(&env, &client, &minter, i, &owner, "NFT");
+    }
+
+    let nfts = client.get_player_nfts(&owner, &0, &u32::MAX);
+    assert_eq!(nfts.len(), 10);
+
+    let paged = client.get_player_nfts(&owner, &2, &3);
+    assert_eq!(paged.len(), 3);
 }

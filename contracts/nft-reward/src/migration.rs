@@ -67,7 +67,8 @@ impl NftRewardMigration {
         offset: u32,
         limit: u32,
     ) -> soroban_sdk::Vec<UpgradeHistoryEntry> {
-        UpgradeAuthorization::get_history(env, offset, limit)
+        let bounded_limit = limit.min(crate::MAX_SCAN_LIMIT);
+        UpgradeAuthorization::get_history(env, offset, bounded_limit)
     }
 
     /// Runs migrations up to `target_version`. When `dry_run` is true, no storage writes occur.
