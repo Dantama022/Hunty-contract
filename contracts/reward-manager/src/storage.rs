@@ -32,6 +32,7 @@ impl Storage {
     const POOL_CFG_KEY: soroban_sdk::Symbol = symbol_short!("PCFG");
     const POOL_DEP_KEY: soroban_sdk::Symbol = symbol_short!("PDEP");
     const POOL_DST_KEY: soroban_sdk::Symbol = symbol_short!("PDST");
+    const POOL_RFD_KEY: soroban_sdk::Symbol = symbol_short!("PRFD");
     const POOL_DIST_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("PDCNT");
     const POOL_LAST_DIST_TS_KEY: soroban_sdk::Symbol = symbol_short!("PLDTS");
     const POOL_DISTRIBUTIONS_KEY: soroban_sdk::Symbol = symbol_short!("PLDIST");
@@ -43,7 +44,7 @@ impl Storage {
     const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("AUDL");
     const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
     const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
-    
+
     pub const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
 
     // ========== Vesting ==========
@@ -60,7 +61,9 @@ impl Storage {
     }
 
     pub fn set_pending_admin(env: &Env, address: &Address) {
-        env.storage().persistent().set(&Self::PENDING_ADMIN_KEY, address);
+        env.storage()
+            .persistent()
+            .set(&Self::PENDING_ADMIN_KEY, address);
     }
 
     pub fn get_pending_admin(env: &Env) -> Option<Address> {
@@ -199,7 +202,6 @@ impl Storage {
         result
     }
 
-
     fn distribution_record_key(
         hunt_id: u64,
         player: &Address,
@@ -329,6 +331,16 @@ impl Storage {
 
     pub fn get_pool_total_distributed(env: &Env, hunt_id: u64) -> i128 {
         let key = Self::pool_dst_key(hunt_id);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    pub fn set_pool_total_refunded(env: &Env, hunt_id: u64, amount: i128) {
+        let key = Self::pool_rfd_key(hunt_id);
+        env.storage().persistent().set(&key, &amount);
+    }
+
+    pub fn get_pool_total_refunded(env: &Env, hunt_id: u64) -> i128 {
+        let key = Self::pool_rfd_key(hunt_id);
         env.storage().persistent().get(&key).unwrap_or(0)
     }
 
@@ -489,6 +501,10 @@ impl Storage {
         (Self::POOL_DST_KEY, hunt_id)
     }
 
+    fn pool_rfd_key(hunt_id: u64) -> (soroban_sdk::Symbol, u64) {
+        (Self::POOL_RFD_KEY, hunt_id)
+    }
+
     fn pool_distributions_key(hunt_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::POOL_DISTRIBUTIONS_KEY, hunt_id)
     }
@@ -592,12 +608,7 @@ impl Storage {
 
     /// Stores a vesting record for a (hunt_id, player) pair.
     /// Called at distribution time when vesting_period_secs > 0.
-    pub fn set_vesting_record(
-        env: &Env,
-        hunt_id: u64,
-        player: &Address,
-        record: &VestingRecord,
-    ) {
+    pub fn set_vesting_record(env: &Env, hunt_id: u64, player: &Address, record: &VestingRecord) {
         let key = Self::vesting_key(hunt_id, player);
         env.storage().persistent().set(&key, record);
     }

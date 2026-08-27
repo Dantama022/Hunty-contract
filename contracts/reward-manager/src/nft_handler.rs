@@ -18,6 +18,9 @@ impl NftHandler {
     /// * `hunt_title` - Hunt title (for metadata context)
     /// * `rarity` - Rarity tier (0-5, 0 = default)
     /// * `tier` - Custom tier (0 = none)
+    /// * `hunt_creator` - The creator of the hunt (for NFT creator attribution)
+    /// * `royalty_bps` - Creator royalty basis points for secondary market sales
+    /// * `transferable` - Whether the NFT is transferable
     ///
     /// # Returns
     /// The unique NFT ID of the minted NFT
@@ -33,6 +36,9 @@ impl NftHandler {
         hunt_title: soroban_sdk::String,
         rarity: u32,
         tier: u32,
+        hunt_creator: &Address,
+        royalty_bps: u32,
+        transferable: bool,
     ) -> Result<u64, RewardErrorCode> {
         let mut metadata: Map<soroban_sdk::Symbol, soroban_sdk::Val> = Map::new(env);
         metadata.set(soroban_sdk::Symbol::new(env, "title"), title.into_val(env));
@@ -53,6 +59,18 @@ impl NftHandler {
             rarity.into_val(env),
         );
         metadata.set(soroban_sdk::Symbol::new(env, "tier"), tier.into_val(env));
+        metadata.set(
+            soroban_sdk::Symbol::new(env, "creator"),
+            hunt_creator.into_val(env),
+        );
+        metadata.set(
+            soroban_sdk::Symbol::new(env, "royalty_bps"),
+            royalty_bps.into_val(env),
+        );
+        metadata.set(
+            soroban_sdk::Symbol::new(env, "transferable"),
+            transferable.into_val(env),
+        );
 
         let mut args = soroban_sdk::Vec::new(env);
         args.push_back(env.current_contract_address().into_val(env));
