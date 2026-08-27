@@ -140,6 +140,10 @@ pub struct NftMintedEvent {
     pub rarity: u32,
     pub tier: u32,
     pub minted_at: u64,
+    pub hunt_title: String,
+    pub total_minted_for_hunt: u32,
+    pub completion_rank: u32,
+    pub collection_stats: String,
 }
 
 /// Event emitted when an operator approval changes.
@@ -470,6 +474,21 @@ impl NftReward {
         Ok(())
     }
 
+    fn compute_completion_rank(
+        env: &Env,
+        hunt_id: u64,
+    ) -> u32 {
+        let players = Storage::get_hunt_players(env, hunt_id);
+        let mut completed: u32 = 0;
+        for i in 0..players.len() {
+            let progress = players.get(i).unwrap();
+            if progress.is_completed {
+                completed += 1;
+            }
+        }
+        completed.saturating_add(1)
+    }
+
     fn mint_reward_nft_impl(
         env: Env,
         hunt_id: u64,
@@ -538,6 +557,15 @@ impl NftReward {
             rarity: nft_data.metadata.rarity,
             tier: nft_data.metadata.tier,
             minted_at,
+            hunt_title: metadata.hunt_title.clone(),
+            total_minted_for_hunt: Storage::get_nft_counter(&env) as u32,
+            completion_rank: Self::compute_completion_rank(env, hunt_id),
+            collection_stats: format!(
+                "total_supply={},total_hunts={},total_owners={}",
+                Storage::get_nft_counter(&env),
+                0u64, // total_hunts would need tracking
+                0u64  // total_owners would need tracking
+            ),
         };
         env.events()
             .publish((Symbol::new(&env, "NftMinted"), nft_id), event);
