@@ -16,8 +16,12 @@ const MAX_NFT_URI_BYTES: u32 = 512;
 const MAX_EXTENSION_FIELDS: u32 = 10;
 const MAX_EXTENSION_KEY_BYTES: u32 = 64;
 const MAX_EXTENSION_VALUE_BYTES: u32 = 512;
-/// Maximum number of NFTs to return in a single scan query (pagination cap).
-pub const MAX_SCAN_LIMIT: u32 = 1000;
+/// Maximum NFTs returned by a single scan/list query.
+///
+/// Matches hunty-core's `MAX_LEADERBOARD_SCAN_SIZE` / `MAX_HUNT_SEARCH_SCAN_SIZE`
+/// (200). `MAX_BATCH_SIZE` (50) is the tighter write-batch cap used elsewhere;
+/// 200 is the read-scan cap so listing stays inside a similar gas budget.
+const MAX_SCAN_LIMIT: u32 = 200;
 
 /// Core display metadata for an NFT (title, description, image URI).
 /// Supports off-chain storage references to keep gas costs low.
@@ -284,6 +288,10 @@ impl NftReward {
         max_supply: Option<u64>,
         collection_metadata: CollectionMetadata,
     ) -> Result<(), crate::errors::NftErrorCode> {
+        // Require the admin to authorize initialization to prevent an attacker from
+        // becoming admin by racing the first transaction after deployment.
+        admin.require_auth();
+
         if Storage::is_initialized(&env) {
             return Err(crate::errors::NftErrorCode::AlreadyInitialized);
         }
@@ -294,6 +302,8 @@ impl NftReward {
 
         Storage::save_admin(&env, &admin);
         Storage::add_minter(&env, &minter);
+        // Ensure the initial minter is also enrolled as an authorized contract
+        Storage::add_authorized_contract(&env, &minter);
         Storage::set_max_supply(&env, max_supply);
         Storage::save_collection_metadata(&env, &collection_metadata);
         Storage::mark_initialized(&env);
@@ -332,11 +342,11 @@ impl NftReward {
                 return;
             }
         }
-        if Storage::has_authorized_contracts(env) {
-            caller.require_auth();
-            if !Storage::is_authorized_contract(env, caller) {
-                panic_with_error!(env, crate::errors::NftErrorCode::Unauthorized);
-            }
+        // Always require the caller to authorize the operation.
+        caller.require_auth();
+        // Fail-closed: caller must be explicitly authorized.
+        if !Storage::is_authorized_contract(env, caller) {
+            panic_with_error!(env, crate::errors::NftErrorCode::Unauthorized);
         }
     }
 
@@ -423,18 +433,25 @@ impl NftReward {
         let description = extract_field!("description", String, String::from_str(&env, ""));
         let image_uri = extract_field!("image_uri", String, String::from_str(&env, ""));
 
-        if !image_uri_is_valid(&image_uri) {
-            panic!("Invalid NFT image_uri: must be non-empty");
-        }
+        let hunt_title = metadata
+            .get(Symbol::new(&env, "hunt_title"))
+            .and_then(|v| String::try_from_val(&env, &v).ok())
+            .unwrap_or_else(|| title.clone());
 
-        let hunt_title = extract_field!("hunt_title", String, title.clone());
-        let rarity = extract_field!("rarity", u32, 0u32);
+        let rarity = metadata
+            .get(Symbol::new(&env, "rarity"))
+            .and_then(|v| u32::try_from_val(&env, &v).ok())
+            .unwrap_or(0u32);
 
-        if rarity > 5 {
-            panic!("InvalidRarity");
-        }
+        let tier = metadata
+            .get(Symbol::new(&env, "tier"))
+            .and_then(|v| u32::try_from_val(&env, &v).ok())
+            .unwrap_or(0u32);
 
-        let tier = extract_field!("tier", u32, 0u32);
+        let creator = metadata
+            .get(Symbol::new(&env, "creator"))
+            .and_then(|v| Address::try_from_val(&env, &v).ok())
+            .or_else(|| Some(player_address.clone()));
 
         let creator = match metadata.get(Symbol::new(&env, "creator")) {
             None => Some(player_address.clone()),
@@ -463,6 +480,13 @@ impl NftReward {
             extensions,
         };
         Ok(Self::mint_reward_nft_impl(env, hunt_id, player_address, meta, transferable))
+    }
+
+    fn validate_image_uri(env: &Env, value: &String) -> Result<(), NftErrorCode> {
+        if !image_uri_is_valid(value) {
+            return Err(NftErrorCode::InvalidMetadata);
+        }
+        Ok(())
     }
 
     fn sanitize_metadata_field(
@@ -520,6 +544,9 @@ impl NftReward {
     ) -> u64 {
         if metadata.rarity > 5 {
             panic_with_error!(&env, crate::errors::NftErrorCode::InvalidRarity);
+        }
+        if let Err(e) = Self::validate_image_uri(&env, &metadata.image_uri) {
+            panic_with_error!(&env, e);
         }
 
         // Validate extensions
@@ -1014,7 +1041,7 @@ impl NftReward {
     /// Lists all NFTs minted by the contract with pagination support.
     ///
     /// Returns a vector of NftData structs, paginated by offset and limit.
-    /// The limit is bounded to MAX_SCAN_LIMIT (1000) to prevent excessive gas consumption.
+    /// The limit is bounded to MAX_SCAN_LIMIT (200) to prevent excessive gas consumption.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment
@@ -1260,15 +1287,20 @@ impl NftReward {
     /// Returns paginated NFT IDs owned by an address.
     /// The limit is bounded to MAX_SCAN_LIMIT (1000) to prevent excessive gas consumption.
     pub fn get_player_nfts(env: Env, owner: Address, offset: u32, limit: u32) -> Vec<u64> {
+        let nfts = Storage::get_owner_nfts(&env, &owner);
+        let len = nfts.len();
+        if offset >= len {
+            return Vec::new(&env);
+        }
         let bounded_limit = limit.min(MAX_SCAN_LIMIT);
-        Storage::get_owner_nfts(&env, &owner, offset, bounded_limit)
+        let end = offset.saturating_add(bounded_limit).min(len);
+        nfts.slice(offset..end)
     }
 
     /// Returns paginated NFT IDs minted for a hunt.
     /// The limit is bounded to MAX_SCAN_LIMIT (1000) to prevent excessive gas consumption.
     pub fn get_nfts_by_hunt(env: Env, hunt_id: u64, offset: u32, limit: u32) -> Vec<u64> {
-        let bounded_limit = limit.min(MAX_SCAN_LIMIT);
-        Storage::get_hunt_nfts(&env, hunt_id, offset, bounded_limit)
+        Storage::get_hunt_nfts(&env, hunt_id, offset, limit.min(MAX_SCAN_LIMIT))
     }
 
     /// Returns the total number of NFTs minted for a hunt.
@@ -1357,5 +1389,90 @@ impl NftReward {
         );
 
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------------
+    // Schema Migration
+    // -----------------------------------------------------------------------------
+
+    pub fn get_schema_version(env: Env) -> u32 {
+        migration::NftRewardMigration::get_schema_version(&env)
+    }
+
+    pub fn initialize_schema(env: Env, admin: Address) {
+        admin.require_auth();
+        migration::NftRewardMigration::initialize_schema(&env, &admin);
+    }
+
+    pub fn propose_upgrade(
+        env: Env,
+        admin: Address,
+        target_version: u32,
+    ) -> Result<hunty_migration::UpgradeProposal, hunty_migration::UpgradeAuthError> {
+        let proposal =
+            migration::NftRewardMigration::propose_upgrade(&env, &admin, target_version)?;
+        env.events().publish(
+            migration::NftRewardMigration::upgrade_proposed_topic(&env),
+            migration::NftRewardMigration::upgrade_proposed_event(&proposal),
+        );
+        Ok(proposal)
+    }
+
+    pub fn set_upgrade_timelock(
+        env: Env,
+        admin: Address,
+        delay_seconds: u64,
+    ) -> Result<(), hunty_migration::UpgradeAuthError> {
+        migration::NftRewardMigration::set_upgrade_timelock(&env, &admin, delay_seconds)
+    }
+
+    pub fn get_upgrade_proposal(env: Env) -> Option<hunty_migration::UpgradeProposal> {
+        migration::NftRewardMigration::get_upgrade_proposal(&env)
+    }
+
+    pub fn get_upgrade_timelock(env: Env) -> u64 {
+        migration::NftRewardMigration::get_upgrade_timelock(&env)
+    }
+
+    pub fn get_upgrade_history(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<hunty_migration::UpgradeHistoryEntry> {
+        migration::NftRewardMigration::get_upgrade_history(&env, offset, limit.min(MAX_SCAN_LIMIT))
+    }
+
+    pub fn run_migration(
+        env: Env,
+        admin: Address,
+        target_version: u32,
+        dry_run: bool,
+    ) -> Result<migration::MigrationReport, hunty_migration::UpgradeAuthError> {
+        let from_version = migration::NftRewardMigration::get_schema_version(&env);
+        let report = migration::NftRewardMigration::run_migration(
+            &env,
+            &admin,
+            target_version,
+            dry_run,
+        )?;
+        if !dry_run && report.succeeded && report.from_version < report.to_version {
+            env.events().publish(
+                migration::NftRewardMigration::upgrade_executed_topic(&env),
+                migration::NftRewardMigration::upgrade_executed_event(
+                    from_version,
+                    report.to_version,
+                    env.ledger().timestamp(),
+                    admin,
+                ),
+            );
+        }
+        Ok(report)
+    }
+
+    pub fn rollback_migration(
+        env: Env,
+        admin: Address,
+    ) -> Result<migration::MigrationReport, hunty_migration::UpgradeAuthError> {
+        migration::NftRewardMigration::rollback_migration(&env, &admin)
     }
 }

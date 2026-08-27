@@ -5956,6 +5956,8 @@ pub fn set_hunty_core(env: Env, admin: Address, hunty_core: Address) -> Result<(
 Adds a contract to the authorized callers list for `distribute_rewards`.
 Only the contract admin can call this.
 
+The distribution gate is fail-closed: `distribute_rewards` reads the immediate invoker via `env.invoker()`, requires that address to authenticate, and then checks whether the address is present in the allowlist. If no contracts are allowlisted, or the invoker is not in the allowlist, the call returns `Unauthorized`.
+
 **Signature:**
 
 ```rust

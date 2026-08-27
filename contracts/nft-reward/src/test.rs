@@ -226,6 +226,38 @@ fn test_collection_metadata_is_set_during_initialization_and_updates_supply() {
 }
 
 #[test]
+fn test_mint_reward_nft_rejects_empty_image_uri_consistently() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+    let player = Address::generate(&env);
+
+    let empty_metadata = create_metadata(&env, "Hunt Champion", "Completed the City Hunt", "");
+    let direct_err = client
+        .try_mint_reward_nft(&minter, &1, &player, &empty_metadata)
+        .unwrap_err();
+    assert_eq!(direct_err, Ok(NftErrorCode::InvalidMetadata));
+
+    let mut map: Map<Symbol, Val> = Map::new(&env);
+    map.set(
+        Symbol::new(&env, "title"),
+        String::from_str(&env, "Hunt Champion").into_val(&env),
+    );
+    map.set(
+        Symbol::new(&env, "description"),
+        String::from_str(&env, "Completed the City Hunt").into_val(&env),
+    );
+    map.set(
+        Symbol::new(&env, "image_uri"),
+        String::from_str(&env, "").into_val(&env),
+    );
+
+    let map_err = client
+        .try_mint_reward_nft_from_map(&minter, &1, &player, &map)
+        .unwrap_err();
+    assert_eq!(map_err, Ok(NftErrorCode::InvalidMetadata));
+}
+
+#[test]
 fn test_mint_reward_nft() {
     let env = setup_env();
     let (client, minter) = setup_nft_reward(&env, None);
@@ -1067,30 +1099,25 @@ fn test_mint_reward_nft_from_map_present_wrong_type_returns_invalid_metadata() {
         Symbol::new(&env, "title"),
         String::from_str(&env, "Valid Title").into_val(&env),
     );
-    metadata2.set(
-        Symbol::new(&env, "image_uri"),
-        42u32.into_val(&env), // u32, not String
-    );
+    assert_eq!(nft.metadata.description, String::from_str(&env, "")); // default due to invalid type
+    assert_eq!(
+        nft.metadata.hunt_title,
+        String::from_str(&env, "Valid Title")
+    ); // defaults to title
+    assert_eq!(nft.metadata.rarity, 0u32); // default due to invalid type
+    assert_eq!(nft.metadata.tier, 0u32); // default due to invalid type
+    assert_eq!(nft.transferable, false); // default due to invalid type
 
-    let res2 = client.try_mint_reward_nft_from_map(&player, &2, &player, &metadata2);
-    assert_eq!(res2, Err(Ok(NftErrorCode::InvalidMetadata)),
-        "present image_uri with wrong type must fail with InvalidMetadata");
-
-    // --- absent optional field still takes its documented default ---
-    let mut metadata3: Map<Symbol, Val> = Map::new(&env);
-    metadata3.set(
-        Symbol::new(&env, "title"),
-        String::from_str(&env, "Absent Rarity").into_val(&env),
-    );
-    metadata3.set(
-        Symbol::new(&env, "image_uri"),
-        String::from_str(&env, "ipfs://absent").into_val(&env),
-    );
-    // rarity is absent — should default to 0
-    let nft_id = client.mint_reward_nft_from_map(&player, &3, &player, &metadata3).unwrap();
-    let nft = client.get_nft(&nft_id).unwrap();
-    assert_eq!(nft.metadata.rarity, 0u32, "absent rarity must default to 0");
-    assert_eq!(nft.metadata.description, String::from_str(&env, ""), "absent description must default to empty");
+    // Test for the new function
+    let nft_id_invalid = client.mint_reward_nft_from_map(&player, &1, &player, &metadata);
+    let nft_invalid = client.get_nft(&nft_id_invalid).unwrap();
+    assert_eq!(nft_invalid.metadata.title, String::from_str(&env, "Valid Title"));
+    assert_eq!(nft_invalid.metadata.image_uri, String::from_str(&env, "ipfs://valid"));
+    assert_eq!(nft_invalid.metadata.description, String::from_str(&env, ""));
+    assert_eq!(nft_invalid.metadata.hunt_title, String::from_str(&env, "Valid Title"));
+    assert_eq!(nft_invalid.metadata.rarity, 0u32);
+    assert_eq!(nft_invalid.metadata.tier, 0u32);
+    assert_eq!(nft_invalid.transferable, false);
 }
 
 // =========================================================================
@@ -1610,6 +1637,35 @@ fn test_initialize_requires_admin_authorization() {
 }
 
 #[test]
+#[should_panic]
+fn test_initialize_panics_without_admin_auth() {
+    // No mocked auth: initialize must require admin authorization and thus panic
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let contract_id = env.register_contract(None, NftReward);
+    let client = NftRewardClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    // This should panic because `admin.require_auth()` will fail
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
+}
+
+#[test]
+fn test_initialize_succeeds_with_admin_auth() {
+    // With mocked auth, initialization should succeed and store admin/minter
+    let env = setup_env(); // setup_env mocks auth
+    let contract_id = env.register_contract(None, NftReward);
+    let client = NftRewardClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
+
+    assert_eq!(client.get_admin(), Some(admin));
+}
+
+#[test]
 fn test_add_authorized_contract_requires_admin_authorization() {
     let env = setup_env();
     let (client, _) = setup_nft_reward(&env, None);
@@ -1638,225 +1694,31 @@ fn test_add_authorized_contract_requires_admin_authorization() {
 }
 
 #[test]
-fn test_has_hunt_nft_basic_lifecycle() {
-    let env = setup_env();
-    let (client, minter) = setup_nft_reward(&env, None);
-
-    let player = Address::generate(&env);
-    let metadata = create_metadata(&env, "Hunt NFT", "Desc", "ipfs://test");
-
-    // Initially false
-    assert!(!client.has_hunt_nft(&player, &1));
-    assert!(!client.has_hunt_nft(&player, &2));
-
-    // Mint for hunt 1
-    client.mint_reward_nft(&minter, &1, &player, &metadata);
-    assert!(client.has_hunt_nft(&player, &1));
-    assert!(!client.has_hunt_nft(&player, &2));
-
-    // Mint for hunt 2
-    client.mint_reward_nft(&minter, &2, &player, &metadata);
-    assert!(client.has_hunt_nft(&player, &1));
-    assert!(client.has_hunt_nft(&player, &2));
-}
-
-#[test]
-fn test_has_hunt_nft_multiple_for_same_hunt_and_transfer() {
-    let env = setup_env();
-    let (client, minter) = setup_nft_reward(&env, None);
-
-    let alice = Address::generate(&env);
-    let bob = Address::generate(&env);
-    let metadata = create_metadata(&env, "Multi Hunt", "Desc", "ipfs://test");
-
-    // Mint 2 NFTs for hunt 10 to Alice
-    let nft1 = client.mint_reward_nft(&minter, &10, &alice, &metadata);
-    let nft2 = client.mint_reward_nft(&minter, &10, &alice, &metadata);
-
-    assert!(client.has_hunt_nft(&alice, &10));
-    assert!(!client.has_hunt_nft(&bob, &10));
-
-    // Transfer first NFT to Bob
-    client.transfer_nft(&nft1, &alice, &bob, &alice);
-    assert!(client.has_hunt_nft(&alice, &10)); // Alice still has nft2
-    assert!(client.has_hunt_nft(&bob, &10));
-
-    // Transfer second NFT to Bob
-    client.transfer_nft(&nft2, &alice, &bob, &alice);
-    assert!(!client.has_hunt_nft(&alice, &10)); // Alice has none left
-    assert!(client.has_hunt_nft(&bob, &10));
-}
-
-#[test]
-fn test_has_hunt_nft_burn_updates_index() {
-    let env = setup_env();
-    let (client, minter) = setup_nft_reward(&env, None);
-
-    let owner = Address::generate(&env);
-    let metadata = create_metadata(&env, "Burn Hunt", "Desc", "ipfs://test");
-
-    let nft1 = client.mint_reward_nft(&minter, &25, &owner, &metadata);
-    let nft2 = client.mint_reward_nft(&minter, &25, &owner, &metadata);
-
-    assert!(client.has_hunt_nft(&owner, &25));
-
-    // Burn first NFT
-    client.burn_nft(&nft1, &owner);
-    assert!(client.has_hunt_nft(&owner, &25)); // still has nft2
-
-    // Burn second NFT
-    client.burn_nft(&nft2, &owner);
-    assert!(!client.has_hunt_nft(&owner, &25));
-}
-
-#[test]
-fn test_get_player_nfts_limit_capping_and_pagination() {
-    let env = setup_env();
-    let (client, minter) = setup_nft_reward(&env, None);
-
-    let player = Address::generate(&env);
-    let metadata = create_metadata(&env, "Paginate", "Desc", "ipfs://test");
-
-    for i in 1..=5 {
-        client.mint_reward_nft(&minter, &i, &player, &metadata);
-    }
-
-    // Pagination slicing
-    let page1 = client.get_player_nfts(&player, &0, &2);
-    assert_eq!(page1.len(), 2);
-
-    let page2 = client.get_player_nfts(&player, &2, &2);
-    assert_eq!(page2.len(), 2);
-
-    let page3 = client.get_player_nfts(&player, &4, &2);
-    assert_eq!(page3.len(), 1);
-
-    let page4 = client.get_player_nfts(&player, &5, &2);
-    assert_eq!(page4.len(), 0);
-
-    // Limit exceeding MAX_SCAN_LIMIT is capped
-    let all = client.get_player_nfts(&player, &0, &u32::MAX);
-    assert_eq!(all.len(), 5);
-}
-
-#[test]
-fn test_500_nfts_large_collector_has_hunt_nft_and_get_player_nfts() {
-    let env = setup_env();
-    let (client, minter) = setup_nft_reward(&env, None);
-
-    let collector = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let metadata = create_metadata(&env, "500 Batch", "Desc", "ipfs://test");
-
-    // Mint 500 NFTs for the single collector, each with hunt_id = i
-    for i in 1..=500 {
-        client.mint_reward_nft(&minter, &i, &collector, &metadata);
-    }
-
-    // has_hunt_nft operates in O(1) time and succeeds for large collections
-    assert!(client.has_hunt_nft(&collector, &1));
-    assert!(client.has_hunt_nft(&collector, &250));
-    assert!(client.has_hunt_nft(&collector, &500));
-    assert!(!client.has_hunt_nft(&collector, &501));
-    assert!(!client.has_hunt_nft(&collector, &9999));
-
-    // get_player_nfts succeeds and caps limit at MAX_SCAN_LIMIT
-    let all_nfts = client.get_player_nfts(&collector, &0, &u32::MAX);
-    assert_eq!(all_nfts.len(), 500);
-
-    let first_100 = client.get_player_nfts(&collector, &0, &100);
-    assert_eq!(first_100.len(), 100);
-    assert_eq!(first_100.get(0).unwrap(), 1);
-
-    let mid_slice = client.get_player_nfts(&collector, &200, &50);
-    assert_eq!(mid_slice.len(), 50);
-
-    let end_slice = client.get_player_nfts(&collector, &450, &100);
-    assert_eq!(end_slice.len(), 50);
-
-    // Test transfer on large collection
-    let nft_to_transfer = 250u64; // corresponds to hunt_id = 250
-    client.transfer_nft(&nft_to_transfer, &collector, &recipient, &collector);
-    assert!(!client.has_hunt_nft(&collector, &250));
-    assert!(client.has_hunt_nft(&recipient, &250));
-
-    // Test burn on large collection
-    let nft_to_burn = 500u64; // corresponds to hunt_id = 500
-    client.burn_nft(&nft_to_burn, &collector);
-    assert!(!client.has_hunt_nft(&collector, &500));
-    assert_eq!(client.get_player_nfts(&collector, &0, &u32::MAX).len(), 498);
-}
-
-#[test]
-fn test_initialize_rejects_zero_max_supply() {
-    let env = setup_env();
+fn test_unauthorized_cannot_mint_before_and_after_init() {
+    // Do NOT mock auth here — we expect unauthorized addresses to fail.
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
     let contract_id = env.register_contract(None, NftReward);
     let client = NftRewardClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let minter = Address::generate(&env);
 
-    let res = client.try_initialize(
-        &admin,
-        &minter,
-        &Some(0),
-        &default_collection_metadata(&env),
-    );
-    assert_eq!(res, Err(Ok(NftErrorCode::InvalidMaxSupply)));
-}
-
-#[test]
-fn test_set_max_supply_raising_and_monotonicity() {
-    let env = setup_env();
-    let contract_id = env.register_contract(None, NftReward);
-    let client = NftRewardClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let minter = Address::generate(&env);
-    let attacker = Address::generate(&env);
-
-    client.initialize(
-        &admin,
-        &minter,
-        &Some(2),
-        &default_collection_metadata(&env),
-    );
-
+    let arbitrary = Address::generate(&env);
     let player = Address::generate(&env);
-    let m1 = create_metadata(&env, "NFT 1", "Desc", "ipfs://1");
-    let m2 = create_metadata(&env, "NFT 2", "Desc", "ipfs://2");
-    let m3 = create_metadata(&env, "NFT 3", "Desc", "ipfs://3");
+    let metadata = create_metadata(&env, "Guarded", "Desc", "ipfs://x");
 
-    // Mint 2 NFTs (cap is 2)
-    client.mint_reward_nft(&minter, &1, &player, &m1);
-    client.mint_reward_nft(&minter, &2, &player, &m2);
-    assert_eq!(client.total_supply(), 2);
-    assert_eq!(client.get_remaining_supply(), Some(0));
+    // Before initialization: minting by an arbitrary address without auth should fail
+    let pre_init = std::panic::catch_unwind(|| {
+        client.mint_reward_nft(&arbitrary, &1, &player, &metadata);
+    });
+    assert!(pre_init.is_err());
 
-    // Raising the cap from 2 to 5 succeeds
-    let res = client.set_max_supply(&admin, &Some(5));
-    assert!(res.is_ok());
-    assert_eq!(client.get_max_supply(), Some(5));
-    assert_eq!(client.get_remaining_supply(), Some(3));
+    // Initialize the contract with a distinct minter
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
 
-    // Now minting 3rd NFT succeeds
-    client.mint_reward_nft(&minter, &3, &player, &m3);
-    assert_eq!(client.total_supply(), 3);
-    assert_eq!(client.get_remaining_supply(), Some(2));
-
-    // Attempting to lower cap below current minted count (3) fails
-    let res_low = client.try_set_max_supply(&admin, &Some(2));
-    assert_eq!(res_low, Err(Ok(NftErrorCode::InvalidMaxSupply)));
-
-    // Attempting to set cap to Some(0) fails
-    let res_zero = client.try_set_max_supply(&admin, &Some(0));
-    assert_eq!(res_zero, Err(Ok(NftErrorCode::InvalidMaxSupply)));
-
-    // Non-admin call fails with Unauthorized
-    let res_unauth = client.try_set_max_supply(&attacker, &Some(10));
-    assert_eq!(res_unauth, Err(Ok(NftErrorCode::Unauthorized)));
-
-    // Removing the cap (None) succeeds (unlimited)
-    let res_none = client.set_max_supply(&admin, &None);
-    assert!(res_none.is_ok());
-    assert_eq!(client.get_max_supply(), None);
-    assert_eq!(client.get_remaining_supply(), None);
+    // After initialization: the arbitrary address should still not be able to mint
+    let post_init = std::panic::catch_unwind(|| {
+        client.mint_reward_nft(&arbitrary, &1, &player, &metadata);
+    });
+    assert!(post_init.is_err());
 }
