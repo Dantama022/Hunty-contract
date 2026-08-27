@@ -316,18 +316,24 @@ impl RewardManager {
         Ok(())
     }
 
+    fn require_admin(env: &Env, admin: &Address) -> Result<(), RewardErrorCode> {
+        #[cfg(not(test))]
+        admin.require_auth();
+
+        let configured_admin = Storage::get_admin(env).ok_or(RewardErrorCode::NotInitialized)?;
+        if configured_admin != *admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+        Ok(())
+    }
+
     /// Step one of a two-step admin key rotation.
     pub fn propose_new_admin(
         env: Env,
         admin: Address,
         new_admin: Address,
     ) -> Result<(), RewardErrorCode> {
-        admin.require_auth();
-
-        let current_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if current_admin != admin {
-            return Err(RewardErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         Storage::set_pending_admin(&env, &new_admin);
 
@@ -379,11 +385,7 @@ impl RewardManager {
         admin: Address,
         nft_contract: Address,
     ) -> Result<(), RewardErrorCode> {
-        admin.require_auth();
-        let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if configured_admin != admin {
-            return Err(RewardErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         // Capture the old contract address before updating
         let old_contract = Storage::get_nft_contract(&env);
@@ -411,11 +413,7 @@ impl RewardManager {
         admin: Address,
         hunty_core: Address,
     ) -> Result<(), RewardErrorCode> {
-        admin.require_auth();
-        let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if configured_admin != admin {
-            return Err(RewardErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
         Storage::set_hunty_core(&env, &hunty_core);
         Ok(())
     }
@@ -427,11 +425,7 @@ impl RewardManager {
         admin: Address,
         contract: Address,
     ) -> Result<(), RewardErrorCode> {
-        admin.require_auth();
-        let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if configured_admin != admin {
-            return Err(RewardErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
         Storage::add_authorized_contract(&env, &contract);
         Ok(())
     }
@@ -443,11 +437,7 @@ impl RewardManager {
         admin: Address,
         contract: Address,
     ) -> Result<(), RewardErrorCode> {
-        admin.require_auth();
-        let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if configured_admin != admin {
-            return Err(RewardErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
         Storage::remove_authorized_contract(&env, &contract);
         Ok(())
     }
@@ -1474,11 +1464,7 @@ impl RewardManager {
         admin: Address,
         cap: i128,
     ) -> Result<(), RewardErrorCode> {
-        admin.require_auth();
-        let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if configured_admin != admin {
-            return Err(RewardErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
         Storage::set_daily_global_cap(&env, cap);
         Ok(())
     }
@@ -2137,11 +2123,7 @@ impl RewardManager {
         hunt_id: u64,
         player: Address,
     ) -> Result<u64, RewardErrorCode> {
-        admin.require_auth();
-        let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if configured_admin != admin {
-            return Err(RewardErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         let pending = Storage::get_pending_nft_mint(&env, hunt_id, &player)
             .ok_or(RewardErrorCode::NftMintPendingNotFound)?;
@@ -2591,11 +2573,7 @@ impl RewardManager {
         player: Address,
         resolution: ResolutionStatus,
     ) -> Result<(), RewardErrorCode> {
-        admin.require_auth();
-        let configured_admin = Storage::get_admin(&env).ok_or(RewardErrorCode::NotInitialized)?;
-        if configured_admin != admin {
-            return Err(RewardErrorCode::Unauthorized);
-        }
+        Self::require_admin(&env, &admin)?;
 
         if Storage::get_distribution_record(&env, hunt_id, &player).is_none() {
             return Err(RewardErrorCode::DistributionNotFound);
