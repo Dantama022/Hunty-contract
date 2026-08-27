@@ -1,5 +1,5 @@
 use crate::{CollectionMetadata, NftCore, NftData, NftMetadata};
-use soroban_sdk::{symbol_short, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{symbol_short, Address, Env, Vec};
 
 /// Storage layer for NFTs.
 pub struct Storage;
@@ -471,9 +471,7 @@ impl Storage {
                     let last_idx = count - 1;
                     if i != last_idx {
                         let last_key = Self::owner_nft_entry_key(owner, last_idx);
-                        if let Some(last_id) =
-                            env.storage().persistent().get::<_, u64>(&last_key)
-                        {
+                        if let Some(last_id) = env.storage().persistent().get::<_, u64>(&last_key) {
                             env.storage().persistent().set(&entry_key, &last_id);
                         }
                         env.storage().persistent().remove(&last_key);
@@ -491,8 +489,7 @@ impl Storage {
                             .get(&Self::TOTAL_OWNERS_KEY)
                             .unwrap_or(0);
                         if current_total > 0 {
-                            env
-                                .storage()
+                            env.storage()
                                 .persistent()
                                 .set(&Self::TOTAL_OWNERS_KEY, &(current_total - 1));
                         }

@@ -47,6 +47,7 @@ impl TokenHandler {
     /// * `contract_addr` - Address of this contract (sender)
     /// * `recipient` - Address of the recipient
     /// * `amount` - Amount to transfer
+    #[allow(dead_code)]
     pub fn distribute_tokens(
         env: &Env,
         token_address: &Address,

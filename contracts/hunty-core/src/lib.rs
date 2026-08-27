@@ -1,16 +1,17 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 use crate::errors::{HuntError, HuntErrorCode};
 use crate::storage::Storage;
 use crate::types::{
     AnswerIncorrectEvent, BatchClueInput, Clue, ClueAddedEvent, ClueAliasesAddedEvent,
     ClueCompletedEvent, ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt,
     HuntActivatedEvent, HuntArchivedEvent, HuntCache, HuntCancelledEvent, HuntClonedEvent,
-    HuntClosedEvent,
-    HuntCompletedEvent, HuntCreatedEvent, HuntDeactivatedEvent, HuntDescriptionUpdatedEvent,
-    HuntReactivatedEvent, HuntStatistics, HuntStatus, HuntStatusChangedEvent,
-    InviteCodeGeneratedEvent, InviteCodeRevokedEvent, LeaderboardEntry, LeaderboardIndexEntry,
-    LeaderboardResult, PlayerProgress, PlayerRegisteredEvent, PlayerRegisteredWithInviteEvent,
-    RewardClaimedEvent, RewardConfig, RewardManagerSetEvent, TimeBonusConfig,
+    HuntClosedEvent, HuntCompletedEvent, HuntCreatedEvent, HuntDeactivatedEvent,
+    HuntDescriptionUpdatedEvent, HuntReactivatedEvent, HuntStatistics, HuntStatus,
+    HuntStatusChangedEvent, InviteCodeGeneratedEvent, InviteCodeRevokedEvent, LeaderboardEntry,
+    LeaderboardIndexEntry, LeaderboardResult, PlayerProgress, PlayerRegisteredEvent,
+    PlayerRegisteredWithInviteEvent, RewardClaimedEvent, RewardConfig, RewardManagerSetEvent,
+    TimeBonusConfig,
 };
 use reward_interface::RewardErrorCode;
 use soroban_sdk::{
@@ -33,17 +34,22 @@ const MAX_BATCH_SIZE: u32 = 50;
 /// Maximum hunt records scanned by discovery queries in one invocation.
 const MAX_HUNT_SEARCH_SCAN_SIZE: u32 = 200;
 /// Default page size for paginated queries.
+#[allow(dead_code)]
 const DEFAULT_PAGE_SIZE: u32 = 20;
 /// Maximum allowed age for a submission envelope before it is considered stale.
 const ANSWER_SUBMISSION_WINDOW_SECS: u64 = 300;
 /// Small forward-skew allowance so near-simultaneous signing and inclusion does not fail.
 const ANSWER_SUBMISSION_FUTURE_SKEW_SECS: u64 = 30;
 /// Maximum number of members allowed in a team.
+#[allow(dead_code)]
 const MAX_TEAM_SIZE: u32 = 10;
 
 #[contract]
 pub struct HuntyCore;
 
+// Exported contract functions with many parameters trigger this lint both on
+// the original fns and on the SDK-generated dispatch wrappers.
+#[allow(clippy::too_many_arguments)]
 #[contractimpl]
 impl HuntyCore {
     /// Sets the contract admin once. Subsequent calls require current admin auth via set_admin.
@@ -56,6 +62,7 @@ impl HuntyCore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn get_player_total_completed_hunts(env: &Env, player: &Address) -> u32 {
         // This would ideally use a global player stats storage
         // For now, we can implement a simple version or extend Storage
@@ -90,6 +97,7 @@ impl HuntyCore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn ensure_not_paused(env: &Env) -> Result<(), HuntErrorCode> {
         if Storage::is_contract_paused(env) {
             return Err(HuntErrorCode::ContractPaused);
@@ -116,6 +124,7 @@ impl HuntyCore {
     /// * `InvalidTitle` - If title is empty or exceeds maximum length
     /// * `InvalidDescription` - If description exceeds maximum length
     /// * `InvalidAddress` - If creator address is invalid
+    #[allow(clippy::too_many_arguments)]
     pub fn create_hunt(
         env: Env,
         creator: Address,
@@ -227,8 +236,8 @@ impl HuntyCore {
         // Ensure caller is authenticated
         caller.require_auth();
         // Load template hunt
-        let template_hunt = Storage::get_hunt(&env, template_hunt_id)
-            .ok_or(HuntErrorCode::HuntNotFound)?;
+        let template_hunt =
+            Storage::get_hunt(&env, template_hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
         // Ensure the template hunt is completed before cloning
         if template_hunt.status != HuntStatus::Completed {
             return Err(HuntErrorCode::InvalidHuntStatus);
@@ -251,7 +260,8 @@ impl HuntyCore {
 
         let mut hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
         // Clone each clue from the template
-        let template_clues = Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
+        let template_clues =
+            Storage::list_clues_for_hunt(&env, template_hunt_id, 0, MAX_CLUES_PER_HUNT);
         for i in 0..template_clues.len() {
             // SAFETY: i is within the vector bounds established by the enclosing loop
             let clue = template_clues.get(i).unwrap();
@@ -295,7 +305,8 @@ impl HuntyCore {
             new_hunt_id: hunt_id,
             creator: caller.clone(),
         };
-        env.events().publish((Symbol::new(&env, "HuntCloned"), hunt_id), clone_event);
+        env.events()
+            .publish((Symbol::new(&env, "HuntCloned"), hunt_id), clone_event);
         Ok(hunt_id)
     }
 
@@ -454,6 +465,7 @@ impl HuntyCore {
     /// * `TooManyClues` - Hunt already has max clues
     /// * `InvalidQuestion` - Question empty or too long
     /// * `InvalidAnswer` - Answer empty or too long
+    #[allow(clippy::too_many_arguments)]
     pub fn add_clue(
         env: Env,
         hunt_id: u64,
@@ -544,6 +556,7 @@ impl HuntyCore {
         Ok(clue_ids)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_clue(
         env: &Env,
         hunt_id: u64,
@@ -566,8 +579,8 @@ impl HuntyCore {
         }
 
         // Get hunt to access default_points
-        let hunt = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
-        
+        let hunt = Storage::get_hunt_or_error(env, hunt_id).map_err(HuntErrorCode::from)?;
+
         // Apply default_points when clue points is 0
         let final_points = if points == 0 {
             hunt.default_points
@@ -591,10 +604,10 @@ impl HuntyCore {
             return Err(HuntErrorCode::from(HuntError::InvalidWeight));
         }
 
-        let clue_id = Storage::next_clue_id(&env, hunt_id);
-        let answer_hash = Self::normalize_and_hash_answer(&env, hunt_id, clue_id, &answer)
+        let clue_id = Storage::next_clue_id(env, hunt_id);
+        let answer_hash = Self::normalize_and_hash_answer(env, hunt_id, clue_id, &answer)
             .map_err(HuntErrorCode::from)?;
-        let mut answer_hashes = Vec::new(&env);
+        let mut answer_hashes = Vec::new(env);
         answer_hashes.push_back(answer_hash);
 
         let clue = Clue {
@@ -609,15 +622,15 @@ impl HuntyCore {
             hint_penalty_points: 0,
         };
 
-        Storage::save_clue(&env, hunt_id, &clue);
+        Storage::save_clue(env, hunt_id, &clue);
 
-        let mut updated = Storage::get_hunt_or_error(&env, hunt_id).map_err(HuntErrorCode::from)?;
+        let mut updated = Storage::get_hunt_or_error(env, hunt_id).map_err(HuntErrorCode::from)?;
         updated.total_clues += 1;
         if is_required {
             updated.required_clues += 1;
         }
-        Self::recalculate_hunt_difficulty(&env, hunt_id, &mut updated);
-        Storage::save_hunt(&env, &updated);
+        Self::recalculate_hunt_difficulty(env, hunt_id, &mut updated);
+        Storage::save_hunt(env, &updated);
         let event = ClueAddedEvent {
             hunt_id,
             clue_id,
@@ -1499,13 +1512,7 @@ impl HuntyCore {
         env.events()
             .publish((Symbol::new(&env, "HuntClosed"), hunt_id), event);
 
-        Self::emit_hunt_status_changed(
-            &env,
-            hunt_id,
-            old_status,
-            HuntStatus::Completed,
-            closed_at,
-        );
+        Self::emit_hunt_status_changed(&env, hunt_id, old_status, HuntStatus::Completed, closed_at);
 
         Ok(())
     }
@@ -1583,8 +1590,6 @@ impl HuntyCore {
             .publish((Symbol::new(&env, "RewardManagerSet"),), event);
         Ok(())
     }
-
-
 
     /// Blacklists a creator address, preventing them from creating new hunts.
     /// Caller must be the admin.
@@ -2005,12 +2010,9 @@ impl HuntyCore {
         Storage::save_hunt(&env, &hunt);
 
         // Emit a status-changed event so off-chain indexers can track privacy toggles
+        // Privacy toggling does not change the hunt's status: it stays in Draft.
         let current_time = env.ledger().timestamp();
-        let old_status = if is_private {
-            HuntStatus::Draft
-        } else {
-            HuntStatus::Draft
-        };
+        let old_status = HuntStatus::Draft;
         Self::emit_hunt_status_changed(
             &env,
             hunt_id,
@@ -2160,8 +2162,10 @@ impl HuntyCore {
             hunt_id,
             player: player.clone(),
         };
-        env.events()
-            .publish((Symbol::new(&env, "PlayerRegisteredWithInvite"), hunt_id), event);
+        env.events().publish(
+            (Symbol::new(&env, "PlayerRegisteredWithInvite"), hunt_id),
+            event,
+        );
 
         Ok(())
     }
@@ -2247,9 +2251,9 @@ impl HuntyCore {
     ) -> u32 {
         let elapsed = completed_at.saturating_sub(started_at);
         let decrease_steps = elapsed / 50; // Decrease every 50 seconds
-        // Use saturating multiplication to prevent overflow on very large elapsed times
+                                           // Use saturating multiplication to prevent overflow on very large elapsed times
         let decrease_bps = decrease_steps.saturating_mul(5000); // 5000 bps = 0.5x per step
-        // Cap at u32::MAX before truncating to prevent silent wrap-around
+                                                                // Cap at u32::MAX before truncating to prevent silent wrap-around
         let decrease_bps_u32 = if decrease_bps > u32::MAX as u64 {
             u32::MAX
         } else {
@@ -2257,8 +2261,7 @@ impl HuntyCore {
         };
         let multiplier_bps = core::cmp::max(
             10000, // Minimum 1x
-            hunt.start_multiplier_bps
-                .saturating_sub(decrease_bps_u32),
+            hunt.start_multiplier_bps.saturating_sub(decrease_bps_u32),
         );
         let base_points = clue
             .points
@@ -2285,7 +2288,7 @@ impl HuntyCore {
             return false;
         };
         let team_progress = Storage::get_team_progress(env, hunt.hunt_id, team_id);
-        team_progress.completed_clues.contains(&clue_id)
+        team_progress.completed_clues.contains(clue_id)
     }
 
     /// In team mode, records a clue completion against the player's team so
@@ -2304,7 +2307,7 @@ impl HuntyCore {
             return;
         };
         let mut team_progress = Storage::get_team_progress(env, hunt.hunt_id, team_id);
-        if team_progress.completed_clues.contains(&clue_id) {
+        if team_progress.completed_clues.contains(clue_id) {
             return;
         }
         team_progress.completed_clues.push_back(clue_id);
@@ -2325,6 +2328,7 @@ impl HuntyCore {
         false
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn finalize_answer_submission(
         env: &Env,
         hunt: &Hunt,
@@ -2363,13 +2367,15 @@ impl HuntyCore {
             progress.recent_submissions = Vec::new(env);
         }
 
-        let all_required_completed = Self::check_all_required_clues_completed(env, hunt_id, progress);
+        let all_required_completed =
+            Self::check_all_required_clues_completed(env, hunt_id, progress);
 
         if all_required_completed && !progress.is_completed {
             progress.is_completed = true;
             progress.completed_at = current_time;
 
-            let mut hunt_mut = Storage::get_hunt(env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+            let mut hunt_mut =
+                Storage::get_hunt(env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
             hunt_mut.completed_count += 1;
             let rank = hunt_mut.completed_count;
             Storage::save_hunt(env, &hunt_mut);
@@ -2404,6 +2410,7 @@ impl HuntyCore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn submit_answer(
         env: Env,
         hunt_id: u64,
@@ -2494,7 +2501,7 @@ impl HuntyCore {
                     .get(0)
                     .ok_or(HuntErrorCode::CorruptPlayerProgress)?;
                 let elapsed = current_time.saturating_sub(oldest_ts);
-                let cooldown_remaining = 60u64.saturating_sub(elapsed);
+                let _cooldown_remaining = 60u64.saturating_sub(elapsed);
                 return Err(HuntErrorCode::from(HuntError::RateLimitExceeded));
             }
         }
@@ -2502,7 +2509,8 @@ impl HuntyCore {
         if hunt.attempt_cooldown_secs > 0 {
             if let Some(last_attempt) = progress.clue_last_attempts.get(clue_id) {
                 if current_time < last_attempt + (hunt.attempt_cooldown_secs as u64) {
-                    let cooldown_remaining = (last_attempt + (hunt.attempt_cooldown_secs as u64)) - current_time;
+                    let _cooldown_remaining =
+                        (last_attempt + (hunt.attempt_cooldown_secs as u64)) - current_time;
                     return Err(HuntErrorCode::from(HuntError::AttemptCooldownNotExpired));
                 }
             }
@@ -2533,6 +2541,7 @@ impl HuntyCore {
     /// This avoids on-chain normalization and hashing when the client supplies
     /// the correctly computed `answer_hash = SHA256(hunt_id || clue_id || normalized_answer)`.
     /// Use this from off-chain callers that can perform normalization+hashing cheaply.
+    #[allow(clippy::too_many_arguments)]
     pub fn submit_answer_with_hash(
         env: Env,
         hunt_id: u64,
@@ -2619,7 +2628,7 @@ impl HuntyCore {
                     .get(0)
                     .ok_or(HuntErrorCode::CorruptPlayerProgress)?;
                 let elapsed = current_time.saturating_sub(oldest_ts);
-                let cooldown_remaining = 60u64.saturating_sub(elapsed);
+                let _cooldown_remaining = 60u64.saturating_sub(elapsed);
                 return Err(HuntErrorCode::from(HuntError::RateLimitExceeded));
             }
         }
@@ -2641,6 +2650,7 @@ impl HuntyCore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn completion_rank(env: &Env, hunt_id: u64) -> u32 {
         let players = Storage::get_hunt_players(env, hunt_id);
         let mut completed_players = 0u32;
@@ -2864,6 +2874,7 @@ impl HuntyCore {
     }
 
     /// Picks the index of the best entry not in `selected`. Order: score desc, then completed_at asc (0 = last).
+    #[allow(dead_code)]
     fn leaderboard_best_index(
         entries: &Vec<(Address, u32, u64, bool)>,
         selected: &Vec<u32>,
@@ -2889,22 +2900,20 @@ impl HuntyCore {
                 Some(bi) => {
                     // SAFETY: bi was set from a previously validated index in this vec
                     let (_, b_score, b_completed_at, _) = entries.get(bi).unwrap();
-                    if score > b_score {
-                        true
-                    } else if score == b_score {
-                        let a_val = if completed_at == 0 {
-                            u64::MAX
-                        } else {
-                            completed_at
-                        };
-                        let b_val = if b_completed_at == 0 {
-                            u64::MAX
-                        } else {
-                            b_completed_at
-                        };
-                        a_val < b_val
+                    let a_val = if completed_at == 0 {
+                        u64::MAX
                     } else {
-                        false
+                        completed_at
+                    };
+                    let b_val = if b_completed_at == 0 {
+                        u64::MAX
+                    } else {
+                        b_completed_at
+                    };
+                    match score.cmp(&b_score) {
+                        core::cmp::Ordering::Greater => true,
+                        core::cmp::Ordering::Equal => a_val < b_val,
+                        core::cmp::Ordering::Less => false,
                     }
                 }
             };
@@ -3324,6 +3333,7 @@ impl HuntyCore {
     }
 
     #[cfg(debug_assertions)]
+    #[allow(dead_code)]
     fn sync_hunt_clue_counts(env: &Env, hunt_id: u64, hunt: &Hunt) {
         let clues = Storage::list_clues_for_hunt(env, hunt_id, 0, u32::MAX);
         let mut total = 0u32;
@@ -3336,11 +3346,16 @@ impl HuntyCore {
                 required += 1;
             }
         }
-        assert_eq!(hunt.total_clues, total, "total_clues drifted for hunt {hunt_id}");
-        assert_eq!(hunt.required_clues, required, "required_clues drifted for hunt {hunt_id}");
+        assert_eq!(
+            hunt.total_clues, total,
+            "total_clues drifted for hunt {hunt_id}"
+        );
+        assert_eq!(
+            hunt.required_clues, required,
+            "required_clues drifted for hunt {hunt_id}"
+        );
     }
 }
-
 
 mod errors;
 mod migration;

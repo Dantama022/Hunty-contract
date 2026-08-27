@@ -43,7 +43,7 @@ impl Storage {
     const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("AUDL");
     const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
     const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
-    
+
     pub const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
 
     // ========== Vesting ==========
@@ -60,7 +60,9 @@ impl Storage {
     }
 
     pub fn set_pending_admin(env: &Env, address: &Address) {
-        env.storage().persistent().set(&Self::PENDING_ADMIN_KEY, address);
+        env.storage()
+            .persistent()
+            .set(&Self::PENDING_ADMIN_KEY, address);
     }
 
     pub fn get_pending_admin(env: &Env) -> Option<Address> {
@@ -198,7 +200,6 @@ impl Storage {
         }
         result
     }
-
 
     fn distribution_record_key(
         hunt_id: u64,
@@ -592,12 +593,7 @@ impl Storage {
 
     /// Stores a vesting record for a (hunt_id, player) pair.
     /// Called at distribution time when vesting_period_secs > 0.
-    pub fn set_vesting_record(
-        env: &Env,
-        hunt_id: u64,
-        player: &Address,
-        record: &VestingRecord,
-    ) {
+    pub fn set_vesting_record(env: &Env, hunt_id: u64, player: &Address, record: &VestingRecord) {
         let key = Self::vesting_key(hunt_id, player);
         env.storage().persistent().set(&key, record);
     }
