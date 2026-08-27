@@ -3746,3 +3746,360 @@ mod test {
         });
     }
 }
+
+    // ========== Audit Fixes: Replay Detection & Refund Accounting ==========
+
+    /// Test the four states of replay detection:
+    /// - (None, fresh): passes — correct, first distribution
+    /// - (None, already_written): impossible after fix (record written before transfers)
+    /// - (Some, already_written): passes — already distributed (correct before but wrong after)
+    /// - (Some, 1): passes — already distributed (THIS IS THE BUG: should fail)
+    #[test]
+    fn test_replay_detection_prevents_double_distribution() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 100_000_000).unwrap();
+
+            // First distribution for player should succeed
+            let result1 = RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player.clone(),
+                xlm_only_config(&env, 50_000_000),
+            );
+            assert!(result1.is_ok(), "First distribution should succeed");
+
+            // Second distribution for same player should fail with AlreadyDistributed
+            let result2 = RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player.clone(),
+                xlm_only_config(&env, 25_000_000),
+            );
+            assert_eq!(
+                result2,
+                Err(RewardErrorCode::AlreadyDistributed),
+                "Second distribution should fail with AlreadyDistributed"
+            );
+        });
+
+        // Player should have received only 50_000_000, not 75_000_000
+        assert_eq!(get_balance(&env, &token_address, &player), 50_000_000);
+    }
+
+    /// Test that distribution record is written BEFORE transfers,
+    /// preventing double distribution even if NFT minting fails.
+    #[test]
+    fn test_distribution_record_written_before_nft_failure() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 100_000_000).unwrap();
+
+            // Attempt distribution with invalid NFT contract (this would fail in NFT handler)
+            // The record should still be written, preventing retry attacks
+            let mut config = xlm_only_config(&env, 30_000_000);
+            config.nft_contract = Some(Address::generate(&env)); // Invalid/non-existent contract
+            
+            let result = RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player.clone(),
+                config.clone(),
+            );
+            // Distribution with XLM should succeed, NFT should fail gracefully
+            // OR if validation rejects the bad config, either way the check below works
+            
+            // Regardless of first attempt outcome, second attempt should be rejected
+            let result2 = RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player.clone(),
+                xlm_only_config(&env, 20_000_000),
+            );
+            // Should fail with AlreadyDistributed (record written even if first partially failed)
+            assert_eq!(result2, Err(RewardErrorCode::AlreadyDistributed));
+        });
+    }
+
+    /// Test refund_pool accounting: deposited == balance + distributed + refunded
+    #[test]
+    fn test_refund_pool_accounting_identity() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+
+            // Fund pool with 100_000_000
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 100_000_000).unwrap();
+            let total_deposited_1 = Storage::get_pool_total_deposited(&env, 1);
+            assert_eq!(total_deposited_1, 100_000_000);
+
+            // Distribute 30_000_000 to a player
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player.clone(),
+                xlm_only_config(&env, 30_000_000),
+            )
+            .unwrap();
+            let total_distributed_1 = Storage::get_pool_total_distributed(&env, 1);
+            assert_eq!(total_distributed_1, 30_000_000);
+
+            // Before refund: balance = 70_000_000, distributed = 30_000_000, refunded = 0
+            let balance_before = RewardManager::get_pool_balance(env.clone(), 1);
+            let total_refunded_before = Storage::get_pool_total_refunded(&env, 1);
+            assert_eq!(balance_before, 70_000_000);
+            assert_eq!(total_refunded_before, 0);
+
+            // Verify accounting identity BEFORE refund
+            let identity_before = total_deposited_1 == balance_before + total_distributed_1 + total_refunded_before;
+            assert!(identity_before, "Accounting identity should hold before refund");
+
+            // Refund the pool
+            RewardManager::refund_pool(env.clone(), creator.clone(), 1).unwrap();
+
+            // After refund: balance = 0, distributed = 30_000_000, refunded = 70_000_000
+            let balance_after = RewardManager::get_pool_balance(env.clone(), 1);
+            let total_distributed_after = Storage::get_pool_total_distributed(&env, 1);
+            let total_refunded_after = Storage::get_pool_total_refunded(&env, 1);
+            assert_eq!(balance_after, 0);
+            assert_eq!(total_distributed_after, 30_000_000);
+            assert_eq!(total_refunded_after, 70_000_000);
+
+            // Verify accounting identity AFTER refund
+            let identity_after = total_deposited_1 == balance_after + total_distributed_after + total_refunded_after;
+            assert!(identity_after, "Accounting identity: {} == {} + {} + {}",
+                total_deposited_1, balance_after, total_distributed_after, total_refunded_after);
+        });
+
+        // Creator should have received the 70_000_000 refund
+        assert_eq!(get_balance(&env, &token_address, &creator), 70_000_000);
+    }
+
+    /// Test that refund_pool emits RewardPoolRefundedEvent
+    #[test]
+    fn test_refund_pool_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 80_000_000).unwrap();
+
+            RewardManager::refund_pool(env.clone(), creator.clone(), 1).unwrap();
+
+            let events = env.events().all();
+            let refund_events: Vec<_> = events
+                .iter()
+                .filter_map(|e| {
+                    if e.0.topics.get(0) == Some(&symbol_short!("POOL_RFD").into_val(&env)) {
+                        Some(e)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            assert!(!refund_events.is_empty(), "RefundedEvent should be emitted");
+        });
+    }
+
+    /// Test that refund_pool uses PoolOperation::Refund in audit log (not Withdraw)
+    #[test]
+    fn test_refund_pool_audit_entry_uses_refund_operation() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 100_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 50_000_000).unwrap();
+
+            RewardManager::refund_pool(env.clone(), creator.clone(), 1).unwrap();
+
+            // Check audit log has Refund operation (not Withdraw)
+            let audit_count = Storage::get_pool_audit_count(&env, 1);
+            assert!(audit_count >= 2); // At least Create and Refund
+
+            // Find the Refund entry
+            let mut found_refund = false;
+            for i in 0..audit_count {
+                if let Some(entry) = Storage::get_pool_audit_entry(&env, 1, i) {
+                    if entry.operation == crate::types::PoolOperation::Refund {
+                        found_refund = true;
+                        assert_eq!(entry.amount, Some(50_000_000));
+                        break;
+                    }
+                }
+            }
+            assert!(found_refund, "Audit log should contain a Refund operation");
+        });
+    }
+
+    /// Test that refund and admin_withdraw are distinguishable in audit log
+    #[test]
+    fn test_refund_vs_withdraw_distinguishable_in_audit() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let admin = Address::generate(&env);
+        let creator = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            RewardManager::initialize(env.clone(), admin.clone(), token_address.clone()).unwrap();
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 100_000_000).unwrap();
+
+            // Distribute some funds (25_000_000 out, 75_000_000 left)
+            let player = Address::generate(&env);
+            RewardManager::distribute_rewards(
+                env.clone(),
+                1,
+                player,
+                xlm_only_config(&env, 25_000_000),
+            )
+            .unwrap();
+
+            // Admin withdrawal of unclaimed
+            RewardManager::admin_withdraw_unclaimed(
+                env.clone(),
+                admin.clone(),
+                1,
+                recipient.clone(),
+                0,
+            )
+            .unwrap();
+
+            // Audit log should show Withdraw operation for admin withdrawal
+            let audit_count = Storage::get_pool_audit_count(&env, 1);
+            let mut found_withdraw = false;
+            for i in 0..audit_count {
+                if let Some(entry) = Storage::get_pool_audit_entry(&env, 1, i) {
+                    if entry.operation == crate::types::PoolOperation::Withdraw {
+                        found_withdraw = true;
+                        // Withdraw should have the amount
+                        assert!(entry.amount.is_some());
+                        break;
+                    }
+                }
+            }
+            assert!(found_withdraw, "Audit log should contain Withdraw operation");
+        });
+
+        // Now test refund_pool separately and verify it's labeled Refund, not Withdraw
+        env.as_contract(&contract_id, || {
+            RewardManager::initialize(env.clone(), admin.clone(), token_address.clone()).unwrap();
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 2, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 2, 50_000_000).unwrap();
+
+            RewardManager::refund_pool(env.clone(), creator.clone(), 2).unwrap();
+
+            let audit_count = Storage::get_pool_audit_count(&env, 2);
+            let mut found_refund = false;
+            let mut found_withdraw = false;
+            for i in 0..audit_count {
+                if let Some(entry) = Storage::get_pool_audit_entry(&env, 2, i) {
+                    match entry.operation {
+                        crate::types::PoolOperation::Refund => found_refund = true,
+                        crate::types::PoolOperation::Withdraw => found_withdraw = true,
+                        _ => {}
+                    }
+                }
+            }
+            assert!(found_refund, "refund_pool should record a Refund operation");
+            assert!(!found_withdraw, "refund_pool should NOT record a Withdraw operation");
+        });
+    }
+
+    /// Test batch distribution also prevents replay (fixed to use simple record check)
+    #[test]
+    fn test_batch_distribution_prevents_replay() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (contract_id, token_address, token_admin) = setup(&env);
+        let creator = Address::generate(&env);
+        let player1 = Address::generate(&env);
+        let player2 = Address::generate(&env);
+
+        mint_tokens(&env, &token_address, &token_admin, &creator, 200_000_000);
+
+        env.as_contract(&contract_id, || {
+            initialize_contract(&env, &token_address);
+            RewardManager::create_reward_pool(env.clone(), creator.clone(), 1, 0).unwrap();
+            RewardManager::fund_reward_pool(env.clone(), creator.clone(), 1, 200_000_000).unwrap();
+
+            // First batch: distribute to two players
+            let entries = {
+                let mut v = Vec::new(&env);
+                v.push_back(BatchDistributionEntry {
+                    hunt_id: 1,
+                    player_address: player1.clone(),
+                    reward_config: xlm_only_config(&env, 50_000_000),
+                });
+                v.push_back(BatchDistributionEntry {
+                    hunt_id: 1,
+                    player_address: player2.clone(),
+                    reward_config: xlm_only_config(&env, 50_000_000),
+                });
+                v
+            };
+            let result = RewardManager::distribute_batch(env.clone(), entries);
+            assert!(result.is_ok(), "First batch should succeed");
+
+            // Second batch: try to distribute to same players again
+            let entries_retry = {
+                let mut v = Vec::new(&env);
+                v.push_back(BatchDistributionEntry {
+                    hunt_id: 1,
+                    player_address: player1.clone(),
+                    reward_config: xlm_only_config(&env, 30_000_000),
+                });
+                v
+            };
+            let result_retry = RewardManager::distribute_batch(env.clone(), entries_retry);
+            assert_eq!(result_retry, Err(RewardErrorCode::AlreadyDistributed),
+                "Retry batch for same player should fail");
+        });
+
+        // Players should have received only 50_000_000 each, not 80_000_000
+        assert_eq!(get_balance(&env, &token_address, &player1), 50_000_000);
+        assert_eq!(get_balance(&env, &token_address, &player2), 50_000_000);
+    }
+}

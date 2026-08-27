@@ -43,6 +43,35 @@ const MAX_ANALYTICS_ENTRIES: u32 = 500;
 #[contract]
 pub struct RewardManager;
 
+/// Prevents concurrent distribution executions within a single transaction.
+///
+/// This guard sets a persistent storage flag when acquired and clears it when dropped.
+/// It provides protection against accidental reentrancy from cross-contract calls.
+///
+/// # Important: Limitations Under Panic=Abort
+///
+/// The Cargo.toml release profile sets `panic = "abort"`, which means no unwinding occurs
+/// when a panic is triggered. In this configuration, Drop destructors do NOT run, and the
+/// flag will remain set (true) indefinitely. This creates a permanent state:
+/// - Any panic between ReentrancyGuard::acquire() and the end of distribute_rewards
+///   (e.g., in token client, NFT handler, or arithmetic overflow) will cause the flag
+///   to persist as true.
+/// - All subsequent distribution calls will immediately fail with ReentrancyDetected.
+/// - There is no admin path to clear this flag once set.
+/// - The contract's core function is effectively disabled until the next ledger TTL expiration.
+///
+/// # Soroban Ledger TTL Behavior
+///
+/// However, Soroban's persistent storage uses a TTL (time-to-live) expiration model:
+/// - Entries that are not accessed within the TTL window are automatically garbage collected.
+/// - When the flag expires, the contract can resume normal operation.
+/// - This provides eventual recovery without manual intervention.
+///
+/// To minimize risk of extended outage:
+/// - Test thoroughly to prevent panics in the critical path.
+/// - Keep calls to external contracts (token, NFT) as simple as possible.
+/// - Monitor the ReentrancyDetected error rate in production metrics.
+/// - Be prepared to document the TTL expiration timeline if this occurs.
 struct ReentrancyGuard {
     env: Env,
 }
@@ -105,6 +134,16 @@ pub struct DistributionCooldownEvent {
 pub struct PoolMigratedEvent {
     pub source_hunt_id: u64,
     pub dest_hunt_id: u64,
+    pub creator: Address,
+    pub amount: i128,
+}
+
+/// Event emitted when a reward pool is refunded back to the creator.
+/// The entire remaining balance is transferred, and the pool is emptied.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RewardPoolRefundedEvent {
+    pub hunt_id: u64,
     pub creator: Address,
     pub amount: i128,
 }
@@ -946,8 +985,41 @@ impl RewardManager {
     }
 
     /// Refunds the entire remaining pool balance for a hunt back to the pool creator.
-    /// Can only be called by the same creator that owns the pool.
-    /// Uses the token address specified when the pool was created.
+    ///
+    /// This function transfers the full balance of the reward pool to the creator,
+    /// emptying the pool completely. It is useful when a hunt is cancelled or expired
+    /// and the remaining funds need to be reclaimed.
+    ///
+    /// **Important:** This is a destructive operation. Ensure all distributions are complete
+    /// before calling this function, as any remaining unclaimed rewards cannot be distributed
+    /// after the pool is refunded.
+    ///
+    /// # Authorization & Eligibility
+    /// * Only the pool creator is authorized to call this
+    /// * The pool must exist for the given hunt_id
+    ///
+    /// # Accounting
+    /// This function updates:
+    /// - Pool balance: Set to 0
+    /// - Total refunded: Incremented by the refund amount
+    /// - Audit log: Entry recorded with PoolOperation::Refund
+    ///
+    /// After a refund, the accounting identity is:
+    /// `total_deposited == balance + total_distributed + total_refunded`
+    ///
+    /// # Events
+    /// Emits a `RewardPoolRefundedEvent` containing:
+    /// - hunt_id
+    /// - creator address
+    /// - refund amount
+    ///
+    /// # Arguments
+    /// * `creator` - The pool creator (must match the stored creator)
+    /// * `hunt_id` - The hunt whose pool balance to refund
+    ///
+    /// # Errors
+    /// * `PoolNotFound` - No pool exists for this hunt_id
+    /// * `Unauthorized` - Caller is not the pool creator
     pub fn refund_pool(env: Env, creator: Address, hunt_id: u64) -> Result<(), RewardErrorCode> {
         creator.require_auth();
 
@@ -1001,9 +1073,23 @@ impl RewardManager {
 
         Storage::set_pool_balance(&env, hunt_id, 0);
 
+        // Track total refunded for accounting
+        let total_refunded = Storage::get_pool_total_refunded(&env, hunt_id) + balance;
+        Storage::set_pool_total_refunded(&env, hunt_id, total_refunded);
+
+        // Emit refund event
+        env.events().publish(
+            (symbol_short!("POOL_RFD"), hunt_id),
+            RewardPoolRefundedEvent {
+                hunt_id,
+                creator: creator.clone(),
+                amount: balance,
+            },
+        );
+
         let audit_entry = PoolAuditEntry {
             actor: creator.clone(),
-            operation: PoolOperation::Withdraw,
+            operation: PoolOperation::Refund,
             timestamp: env.ledger().timestamp(),
             amount: Some(balance),
         };
@@ -1413,20 +1499,9 @@ impl RewardManager {
             return Err(RewardErrorCode::PoolFrozen);
         }
 
-        // Prevent double distribution using monotonic nonce
-        // Get current distribution state before any mutations
-        let distribution_record = Storage::get_distribution_record(&env, hunt_id, &player_address);
-        let current_nonce = Storage::get_distribution_nonce(&env, hunt_id, &player_address);
-
-        // Detect replay: if record exists but nonce hasn't been incremented, it's a replay attempt
-        if distribution_record.is_some() && current_nonce == 0 {
+        // Prevent double distribution: check if a distribution record already exists
+        if Storage::get_distribution_record(&env, hunt_id, &player_address).is_some() {
             return Err(RewardErrorCode::AlreadyDistributed);
-        }
-
-        // Verify distribution state consistency
-        let expected_nonce = if distribution_record.is_some() { 1 } else { 0 };
-        if current_nonce != expected_nonce {
-            return Err(RewardErrorCode::ReplayDetected);
         }
 
         let _reentrancy_guard = ReentrancyGuard::acquire(&env)?;
@@ -1454,7 +1529,8 @@ impl RewardManager {
         let mut xlm_amount = 0i128;
         let mut nft_id: Option<u64> = None;
 
-        // Route to token handler if configured
+        // Calculate amounts first (before any transfers/mutations)
+        // Validate XLM amount if present
         if reward_config.has_xlm() {
             let amount = reward_config.xlm_amount.unwrap();
             if amount <= 0 {
@@ -1471,6 +1547,28 @@ impl RewardManager {
             {
                 return Err(RewardErrorCode::BelowMinimumAmount);
             }
+
+            xlm_amount = amount;
+        }
+
+        // Validate NFT tier if present
+        if reward_config.has_nft() {
+            if reward_config.nft_rarity > 5 {
+                return Err(RewardErrorCode::InvalidConfig);
+            }
+        }
+
+        // Write distribution record BEFORE any transfers to prevent replay in all failure modes
+        Storage::set_distribution_record(
+            &env,
+            hunt_id,
+            &player_address,
+            &DistributionRecord { xlm_amount, nft_id },
+        );
+
+        // Now proceed with actual transfers and other mutations
+        let pool_config =
+            Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
 
             // Use the token address from the pool config
             let token_address = &pool_config.token_address;
@@ -1635,17 +1733,13 @@ impl RewardManager {
             }
         }
 
-        // Record distribution with monotonic nonce to prevent replay attacks
-        Storage::set_distribution_record(
-            &env,
-            hunt_id,
-            &player_address,
-            &DistributionRecord { xlm_amount, nft_id },
-        );
-
-        // Increment nonce atomically after successful distribution
-        // Instance storage is immutable and not subject to TTL expiration
-        Storage::increment_distribution_nonce(&env, hunt_id, &player_address);
+        // Update the distribution record with the actual nft_id if minting succeeded
+        if let Some(nft_id_val) = nft_id {
+            if let Some(mut record) = Storage::get_distribution_record(&env, hunt_id, &player_address) {
+                record.nft_id = Some(nft_id_val);
+                Storage::set_distribution_record(&env, hunt_id, &player_address, &record);
+            }
+        }
 
         let timestamp = env.ledger().timestamp();
         let proof_hash =
@@ -1752,18 +1846,9 @@ impl RewardManager {
                 return Err(RewardErrorCode::InvalidConfig);
             }
 
-            // 1b. Replay protection (same checks as distribute_rewards)
-            let dist_record =
-                Storage::get_distribution_record(&env, entry.hunt_id, &entry.player_address);
-            let current_nonce =
-                Storage::get_distribution_nonce(&env, entry.hunt_id, &entry.player_address);
-
-            if dist_record.is_some() && current_nonce == 0 {
+            // 1b. Replay protection (check if distribution record already exists)
+            if Storage::get_distribution_record(&env, entry.hunt_id, &entry.player_address).is_some() {
                 return Err(RewardErrorCode::AlreadyDistributed);
-            }
-            let expected_nonce = if dist_record.is_some() { 1 } else { 0 };
-            if current_nonce != expected_nonce {
-                return Err(RewardErrorCode::ReplayDetected);
             }
 
             // 1c. XLM-specific validation
@@ -1842,6 +1927,15 @@ impl RewardManager {
             if entry.reward_config.has_xlm() {
                 let amount = entry.reward_config.xlm_amount.unwrap();
 
+                // Write distribution record BEFORE XLM transfer to prevent replay
+                xlm_amount = amount;
+                Storage::set_distribution_record(
+                    &env,
+                    entry.hunt_id,
+                    &entry.player_address,
+                    &DistributionRecord { xlm_amount, nft_id },
+                );
+
                 // Daily caps (accumulated across entries in this batch)
                 Storage::add_daily_pool_distributed(&env, entry.hunt_id, day, amount);
                 Storage::add_daily_global_distributed(&env, day, amount);
@@ -1918,6 +2012,16 @@ impl RewardManager {
                 let pool_config = Storage::get_pool_config(&env, entry.hunt_id)
                     .ok_or(RewardErrorCode::PoolNotFound)?;
 
+                // If we haven't written the record yet (no XLM case), write it before NFT distribution
+                if !entry.reward_config.has_xlm() {
+                    Storage::set_distribution_record(
+                        &env,
+                        entry.hunt_id,
+                        &entry.player_address,
+                        &DistributionRecord { xlm_amount, nft_id },
+                    );
+                }
+
                 match NftHandler::distribute_nft(
                     &env,
                     &nft_contract,
@@ -1933,7 +2037,14 @@ impl RewardManager {
                     pool_config.nft_royalty_bps,
                     pool_config.nft_transferable,
                 ) {
-                    Ok(id) => nft_id = Some(id),
+                    Ok(id) => {
+                        nft_id = Some(id);
+                        // Update the record with the NFT ID
+                        if let Some(mut record) = Storage::get_distribution_record(&env, entry.hunt_id, &entry.player_address) {
+                            record.nft_id = Some(id);
+                            Storage::set_distribution_record(&env, entry.hunt_id, &entry.player_address, &record);
+                        }
+                    },
                     Err(_) => {
                         env.events().publish(
                             (symbol_short!("NFT_FAIL"), entry.hunt_id),
@@ -1963,16 +2074,7 @@ impl RewardManager {
                 }
             }
 
-            // 2c. Record distribution with monotonic nonce
-            Storage::set_distribution_record(
-                &env,
-                entry.hunt_id,
-                &entry.player_address,
-                &DistributionRecord { xlm_amount, nft_id },
-            );
-            Storage::increment_distribution_nonce(&env, entry.hunt_id, &entry.player_address);
-
-            // 2d. Emit event (same shape as single distribute_rewards)
+            // 2c. Emit event (same shape as single distribute_rewards)
             env.events().publish(
                 (symbol_short!("RWD_DIST"), entry.hunt_id),
                 RewardsDistributedEvent {
@@ -1983,7 +2085,7 @@ impl RewardManager {
                 },
             );
 
-            // 2e. Audit entry
+            // 2d. Audit entry
             let audit_entry = PoolAuditEntry {
                 actor: entry.player_address.clone(),
                 operation: PoolOperation::Distribute,
