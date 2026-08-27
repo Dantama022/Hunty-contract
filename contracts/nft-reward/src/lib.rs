@@ -321,6 +321,13 @@ impl NftReward {
     }
 
     fn require_authorized_caller(env: &Env, caller: &Address) {
+        // Check the stored reward_manager address first.
+        if let Some(reward_manager) = Storage::get_reward_manager(env) {
+            if reward_manager == *caller {
+                caller.require_auth();
+                return;
+            }
+        }
         if Storage::has_authorized_contracts(env) {
             caller.require_auth();
             if !Storage::is_authorized_contract(env, caller) {
