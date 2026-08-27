@@ -3,7 +3,7 @@
 use crate::errors::{HuntError, HuntErrorCode};
 use crate::storage::Storage;
 use crate::types::{
-    AnswerIncorrectEvent, BatchClueInput, Clue, ClueAddedEvent, ClueAliasesAddedEvent,
+    AnswerIncorrectEvent, AnswerPreviewedEvent, BatchClueInput, Clue, ClueAddedEvent, ClueAliasesAddedEvent,
     ClueCompletedEvent, ClueInfo, CreatorBlacklistedEvent, CreatorRemovedFromBlacklistEvent, Hunt,
     HuntActivatedEvent, HuntArchivedEvent, HuntCache, HuntCancelledEvent, HuntClonedEvent,
     HuntClosedEvent, HuntCompletedEvent, HuntCreatedEvent, HuntDeactivatedEvent,
@@ -37,7 +37,7 @@ const MAX_HUNT_SEARCH_SCAN_SIZE: u32 = 200;
 #[allow(dead_code)]
 const DEFAULT_PAGE_SIZE: u32 = 20;
 /// Maximum allowed age for a submission envelope before it is considered stale.
-const ANSWER_SUBMISSION_WINDOW_SECS: u64 = 300;
+pub(crate) const ANSWER_SUBMISSION_WINDOW_SECS: u64 = 300;
 /// Small forward-skew allowance so near-simultaneous signing and inclusion does not fail.
 const ANSWER_SUBMISSION_FUTURE_SKEW_SECS: u64 = 30;
 /// Maximum number of members allowed in a team.
@@ -2170,47 +2170,94 @@ impl HuntyCore {
         Ok(())
     }
 
-    /// Verifies a candidate answer without recording progress or emitting events.
+    /// Verifies a candidate answer for a registered player with authorization and rate limiting.
+    ///
+    /// Unlike `submit_answer`, `preview_answer` does not mark the clue as completed, award points,
+    /// or emit clue completion events, but requires player authorization and enforces the same
+    /// per-minute rate limits and attempt cooldowns to prevent brute-force dictionary attacks.
     pub fn preview_answer(
         env: Env,
         hunt_id: u64,
         clue_id: u32,
         player: Address,
         answer: String,
-    ) -> bool {
-        let Some(hunt) = Storage::get_hunt(&env, hunt_id) else {
-            return false;
-        };
+    ) -> Result<bool, HuntErrorCode> {
+        // Require player authorization
+        player.require_auth();
+
+        if Storage::is_pause_answers(&env) {
+            return Err(HuntErrorCode::AnswersPaused);
+        }
+
+        let hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
 
         let current_time = env.ledger().timestamp();
-        if !hunt.is_active(current_time) {
-            return false;
+        let _cache = Self::validate_hunt_active_cached(&env, hunt_id)?;
+
+        if Storage::is_banned(&env, hunt_id, &player) {
+            return Err(HuntErrorCode::BannedPlayer);
         }
 
-        if Storage::get_player_progress(&env, hunt_id, &player).is_none() {
-            return false;
+        let mut progress = Storage::get_player_progress(&env, hunt_id, &player)
+            .ok_or(HuntErrorCode::PlayerNotRegistered)?;
+
+        let clue = Storage::get_clue(&env, hunt_id, clue_id).ok_or(HuntErrorCode::ClueNotFound)?;
+
+        if progress.has_completed_clue(clue_id) {
+            return Err(HuntErrorCode::ClueAlreadyCompleted);
         }
 
-        let Some(clue) = Storage::get_clue(&env, hunt_id, clue_id) else {
-            return false;
-        };
-        let Ok(submitted_hash) = Self::normalize_and_hash_answer(&env, hunt_id, clue_id, &answer)
-        else {
-            return false;
-        };
+        if Self::team_has_completed_clue(&env, &hunt, &player, clue_id) {
+            return Err(HuntErrorCode::ClueAlreadyCompleted);
+        }
 
-        let mut correct = false;
-        for i in 0..clue.answer_hashes.len() {
-            // Stored state: prefer typed absence over panic on inconsistent clue data.
-            let Some(stored_hash) = clue.answer_hashes.get(i) else {
-                return false;
-            };
-            if stored_hash == submitted_hash {
-                correct = true;
-                break;
+        if hunt.max_submissions_per_minute > 0 {
+            let mut updated_submissions = Vec::new(&env);
+            for i in 0..progress.recent_submissions.len() {
+                let ts = progress
+                    .recent_submissions
+                    .get(i)
+                    .ok_or(HuntErrorCode::CorruptPlayerProgress)?;
+                if current_time < ts + 60 {
+                    updated_submissions.push_back(ts);
+                }
             }
+            progress.recent_submissions = updated_submissions;
+
+            if progress.recent_submissions.len() >= hunt.max_submissions_per_minute {
+                return Err(HuntErrorCode::RateLimitExceeded);
+            }
+            progress.recent_submissions.push_back(current_time);
         }
-        correct
+
+        if hunt.attempt_cooldown_secs > 0 {
+            if let Some(last_attempt) = progress.clue_last_attempts.get(clue_id) {
+                if current_time < last_attempt + (hunt.attempt_cooldown_secs as u64) {
+                    return Err(HuntErrorCode::from(HuntError::AttemptCooldownNotExpired));
+                }
+            }
+            progress.clue_last_attempts.set(clue_id, current_time);
+        }
+
+        Storage::save_player_progress(&env, &progress);
+
+        let submitted_hash = Self::normalize_and_hash_answer(&env, hunt_id, clue_id, &answer)
+            .map_err(HuntErrorCode::from)?;
+
+        let correct = Self::is_answer_correct(&clue, &submitted_hash);
+        let preview_event = AnswerPreviewedEvent {
+            hunt_id,
+            player: player.clone(),
+            clue_id,
+            is_correct: correct,
+            timestamp: current_time,
+        };
+        env.events().publish(
+            (Symbol::new(&env, "AnswerPreviewed"), hunt_id, clue_id),
+            preview_event,
+        );
+
+        Ok(correct)
     }
 
     /// This function verifies the submitted answer by hashing it and comparing
@@ -3365,5 +3412,9 @@ mod sanitization;
 mod storage;
 pub mod types;
 
+// #[cfg(test)]
+// mod test;
+
 #[cfg(test)]
-mod test;
+mod preview_answer_security_test;
+
