@@ -284,6 +284,10 @@ impl NftReward {
         max_supply: Option<u64>,
         collection_metadata: CollectionMetadata,
     ) -> Result<(), crate::errors::NftErrorCode> {
+        // Require the admin to authorize initialization to prevent an attacker from
+        // becoming admin by racing the first transaction after deployment.
+        admin.require_auth();
+
         if Storage::is_initialized(&env) {
             return Err(crate::errors::NftErrorCode::AlreadyInitialized);
         }

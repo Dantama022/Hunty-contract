@@ -1648,6 +1648,35 @@ fn test_initialize_requires_admin_authorization() {
 }
 
 #[test]
+#[should_panic]
+fn test_initialize_panics_without_admin_auth() {
+    // No mocked auth: initialize must require admin authorization and thus panic
+    let env = Env::default();
+    env.ledger().set_timestamp(1000);
+    let contract_id = env.register_contract(None, NftReward);
+    let client = NftRewardClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+    // This should panic because `admin.require_auth()` will fail
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
+}
+
+#[test]
+fn test_initialize_succeeds_with_admin_auth() {
+    // With mocked auth, initialization should succeed and store admin/minter
+    let env = setup_env(); // setup_env mocks auth
+    let contract_id = env.register_contract(None, NftReward);
+    let client = NftRewardClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let minter = Address::generate(&env);
+
+    client.initialize(&admin, &minter, &None, &default_collection_metadata(&env));
+
+    assert_eq!(client.get_admin(), Some(admin));
+}
+
+#[test]
 fn test_add_authorized_contract_requires_admin_authorization() {
     let env = setup_env();
     let (client, _) = setup_nft_reward(&env, None);
