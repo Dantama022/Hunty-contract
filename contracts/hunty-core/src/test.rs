@@ -21,6 +21,7 @@ mod test {
     // Benchmark-style micro tests (best-effort gas/footprint proxy)
 
     use super::*;
+    use crate::ANSWER_SUBMISSION_WINDOW_SECS;
     use soroban_sdk::{Address, Env, IntoVal, String, Symbol, TryIntoVal, Vec};
     // Bring Soroban testutils traits into scope (generate addresses, set ledger info, register contracts).
     use crate::errors::{HuntError, HuntErrorCode};
@@ -136,6 +137,18 @@ mod test {
         }
 
         (reward_manager_id, token_address, token_admin)
+    }
+
+    fn submit_answer(
+        env: &Env,
+        hunt_id: u64,
+        clue_id: u32,
+        player: Address,
+        answer: String,
+        nonce: u64,
+    ) -> Result<bool, HuntErrorCode> {
+        let now = env.ledger().timestamp();
+        HuntyCore::submit_answer(env.clone(), hunt_id, clue_id, player, answer, nonce, now)
     }
 
     #[test]

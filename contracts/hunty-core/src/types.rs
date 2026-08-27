@@ -313,13 +313,7 @@ impl PlayerProgress {
     /// `activated_at` is the hunt's activation timestamp, used to delta-encode
     /// `started_at` and `completed_at` into compact `u32` offsets.
     pub fn to_stored(&self, activated_at: u64) -> StoredPlayerProgress {
-        let mut flags: u32 = 0;
-        if self.is_completed {
-            flags |= 0b0000_0001;
-        }
-        if self.reward_claimed {
-            flags |= 0b0000_0010;
-        }
+        let flags = Self::bools_to_flags(self.is_completed, self.reward_claimed);
 
         // Delta-encode timestamps relative to hunt activation.
         let started_at_delta = self.started_at.saturating_sub(activated_at) as u32;
