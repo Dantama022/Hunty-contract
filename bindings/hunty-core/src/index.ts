@@ -1118,9 +1118,9 @@ export interface Client {
 
   /**
    * Construct and simulate a preview_answer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Verifies a candidate answer without recording progress or emitting events.
+   * Verifies a candidate answer for a registered player with authorization and rate limiting.
    */
-  preview_answer: ({hunt_id, clue_id, player, answer}: {hunt_id: u64, clue_id: u32, player: string, answer: string}, options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+  preview_answer: ({hunt_id, clue_id, player, answer}: {hunt_id: u64, clue_id: u32, player: string, answer: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<boolean>>>
 
   /**
    * Construct and simulate a deactivate_hunt transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -1690,7 +1690,7 @@ export class Client extends ContractClient {
         get_hunt_count: this.txFromJSON<u64>,
         is_blacklisted: this.txFromJSON<boolean>,
         pause_contract: this.txFromJSON<Result<void>>,
-        preview_answer: this.txFromJSON<boolean>,
+        preview_answer: this.txFromJSON<Result<boolean>>,
         deactivate_hunt: this.txFromJSON<Result<void>>,
         get_co_creators: this.txFromJSON<Array<string>>,
         get_pause_state: this.txFromJSON<readonly [boolean, boolean, boolean]>,

@@ -101,4 +101,10 @@ pub enum RewardErrorCode {
 
     /// The pool does not have vesting configured (vesting_period_secs == 0).
     VestingNotConfigured = 36,
+
+    /// Pool funding is paused (issue #628). Distribution may still be running.
+    FundingPaused = 37,
+
+    /// Reward distribution is paused (issue #628). Funding may still be open.
+    DistributionPaused = 38,
 }
