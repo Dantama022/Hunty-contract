@@ -52,6 +52,10 @@ impl Storage {
         (Self::OWNER_NFT_COUNT_KEY, owner.clone())
     }
 
+    fn owner_hunt_count_key(owner: &Address, hunt_id: u64) -> (soroban_sdk::Symbol, Address, u64) {
+        (symbol_short!("OHNT"), owner.clone(), hunt_id)
+    }
+
     fn owner_nft_exist_key(owner: &Address, nft_id: u64) -> (soroban_sdk::Symbol, Address, u64) {
         (symbol_short!("ONFX"), owner.clone(), nft_id)
     }
@@ -408,7 +412,8 @@ impl Storage {
         if offset >= count {
             return Vec::new(env);
         }
-        let end = offset.saturating_add(limit).min(count);
+        let bounded_limit = limit.min(crate::MAX_SCAN_LIMIT);
+        let end = offset.saturating_add(bounded_limit).min(count);
         let mut ids = Vec::new(env);
         for i in offset..end {
             let entry_key = Self::hunt_nft_entry_key(hunt_id, i);
@@ -417,6 +422,27 @@ impl Storage {
             }
         }
         ids
+    }
+
+    pub fn increment_owner_hunt_count(env: &Env, owner: &Address, hunt_id: u64) {
+        let key = Self::owner_hunt_count_key(owner, hunt_id);
+        let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(count + 1));
+    }
+
+    pub fn decrement_owner_hunt_count(env: &Env, owner: &Address, hunt_id: u64) {
+        let key = Self::owner_hunt_count_key(owner, hunt_id);
+        let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        if count <= 1 {
+            env.storage().persistent().remove(&key);
+        } else {
+            env.storage().persistent().set(&key, &(count - 1));
+        }
+    }
+
+    pub fn has_hunt_nft(env: &Env, owner: &Address, hunt_id: u64) -> bool {
+        let key = Self::owner_hunt_count_key(owner, hunt_id);
+        env.storage().persistent().has(&key)
     }
 
     pub fn remove_nft_from_hunt(env: &Env, hunt_id: u64, nft_id: u64) {
@@ -501,11 +527,16 @@ impl Storage {
             .unwrap_or_else(|| Vec::new(env))
     }
 
-    pub fn get_owner_nfts(env: &Env, owner: &Address) -> Vec<u64> {
+    pub fn get_owner_nfts(env: &Env, owner: &Address, offset: u32, limit: u32) -> Vec<u64> {
         let count_key = Self::owner_nft_count_key(owner);
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if offset >= count {
+            return Vec::new(env);
+        }
+        let bounded_limit = limit.min(crate::MAX_SCAN_LIMIT);
+        let end = offset.saturating_add(bounded_limit).min(count);
         let mut ids = Vec::new(env);
-        for i in 0..count {
+        for i in offset..end {
             let entry_key = Self::owner_nft_entry_key(owner, i);
             if let Some(id) = env.storage().persistent().get(&entry_key) {
                 ids.push_back(id);

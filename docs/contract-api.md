@@ -4699,6 +4699,7 @@ _No contract API functions found._
 #### `initialize`
 
 Initializes the NFT reward contract with an admin, minter, and optional max supply cap.
+Passing `Some(0)` as `max_supply` is rejected with `InvalidMaxSupply`; use `None` for unlimited minting.
 
 **Signature:**
 
@@ -4738,6 +4739,7 @@ pub fn initialize(env: Env, admin: Address, minter: Address, max_supply: Option<
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -4921,6 +4923,7 @@ pub fn set_nft_extension(env: Env, nft_id: u64, owner: Address, key: String, val
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -5022,6 +5025,7 @@ pub fn remove_nft_extension(env: Env, nft_id: u64, owner: Address, key: String) 
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -5083,6 +5087,7 @@ pub fn set_reward_manager(env: Env, admin: Address, reward_manager: Address) -> 
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -5126,6 +5131,7 @@ pub fn add_authorized_contract(env: Env, admin: Address, contract: Address) -> R
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -5169,6 +5175,7 @@ pub fn remove_authorized_contract(env: Env, admin: Address, contract: Address) -
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -5225,6 +5232,7 @@ pub fn admin_update_image_uris(env: Env, admin: Address, old_prefix: String, new
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -5271,6 +5279,7 @@ pub fn update_nft_metadata(env: Env, nft_id: u64, updater: Address, new_descript
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -5282,25 +5291,6 @@ Returns the total number of NFTs minted so far.
 
 ```rust
 pub fn total_supply(env: Env) -> u64
-```
-
-**Parameters:**
-
-- `env: Env`
-
-**Returns:** `u64`
-
----
-
-#### `get_total_nft_count`
-
-Returns the total count of NFTs currently in the contract.
-Equivalent to total_supply() but with a dedicated function name for clarity.
-
-**Signature:**
-
-```rust
-pub fn get_total_nft_count(env: Env) -> u64
 ```
 
 **Parameters:**
@@ -5337,14 +5327,15 @@ pub fn get_max_supply(env: Env) -> Option<u64>
 
 Updates the maximum total supply cap. Admin only.
 
-- Pass `None` or `Some(0)` to remove the cap (unlimited).
-- Pass `Some(n)` where `n >= current total_supply` to set a new cap.
-Attempting to set a cap lower than the already-minted count is
-rejected with `Unauthorized` to prevent bricking the contract.
+- Pass `None` to remove the cap (unlimited).
+- Pass `Some(n)` where `n > 0` and `n >= current total_supply` to set or raise the cap.
+  Attempting to set a cap of `0` or lower than the already-minted count is
+  rejected with `InvalidMaxSupply`.
 
 # Errors
 * `NotInitialized` - Contract has not been initialized yet
-* `Unauthorized`   - Caller is not the admin, or new cap < minted supply
+* `Unauthorized`   - Caller is not the admin
+* `InvalidMaxSupply` - `new_max` is `Some(0)` or less than the current minted supply
 
 **Signature:**
 
@@ -5382,6 +5373,7 @@ pub fn set_max_supply(env: Env, admin: Address, new_max: Option<u64>) -> Result<
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -5389,7 +5381,7 @@ pub fn set_max_supply(env: Env, admin: Address, new_max: Option<u64>) -> Result<
 
 Returns the number of NFTs that can still be minted.
 
-- `None`  → unlimited (no cap configured, or cap was set to 0)
+- `None`  → unlimited (no cap configured)
 - `Some(n)` → exactly `n` more NFTs may be minted before the cap is hit
 
 Once the cap is reached this returns `Some(0)`, and any subsequent mint
@@ -5530,6 +5522,7 @@ pub fn transfer_nft(env: Env, nft_id: u64, from_address: Address, to_address: Ad
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -5541,25 +5534,6 @@ Returns the owner of an NFT.
 
 ```rust
 pub fn owner_of(env: Env, nft_id: u64) -> Option<Address>
-```
-
-**Parameters:**
-
-- `env: Env`
-- `nft_id: u64`
-
-**Returns:** `Option<Address>`
-
----
-
-#### `get_nft_owner`
-
-Alias for owner_of. Returns the owner of an NFT.
-
-**Signature:**
-
-```rust
-pub fn get_nft_owner(env: Env, nft_id: u64) -> Option<Address>
 ```
 
 **Parameters:**
@@ -5595,7 +5569,7 @@ pub fn verify_ownership(env: Env, address: Address, nft_id: u64) -> bool
 #### `has_hunt_nft`
 
 Returns `true` if `address` owns any NFT minted for `hunt_id`.
-Scans the owner's indexed NFT IDs and checks each NFT's `hunt_id`.
+Performs an O(1) indexed lookup via the stored (owner, hunt_id) count mapping.
 
 **Signature:**
 
@@ -5616,6 +5590,7 @@ pub fn has_hunt_nft(env: Env, address: Address, hunt_id: u64) -> bool
 #### `get_player_nfts`
 
 Returns paginated NFT IDs owned by an address.
+The limit is bounded to MAX_SCAN_LIMIT (1000) to prevent excessive gas consumption.
 
 **Signature:**
 
@@ -5637,6 +5612,7 @@ pub fn get_player_nfts(env: Env, owner: Address, offset: u32, limit: u32) -> Vec
 #### `get_nfts_by_hunt`
 
 Returns paginated NFT IDs minted for a hunt.
+The limit is bounded to MAX_SCAN_LIMIT (1000) to prevent excessive gas consumption.
 
 **Signature:**
 
@@ -5722,6 +5698,7 @@ pub fn burn_nft(env: Env, nft_id: u64, owner: Address) -> Result<(), crate::erro
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ---
 
@@ -8513,6 +8490,7 @@ pub fn get_pool_audit_log(env: Env, hunt_id: u64, start_after: Option<u64>, limi
 - `InvalidExtensionKey` = 16
 - `InvalidExtensionValue` = 17
 - `ExtensionNotFound` = 18
+- `InvalidMaxSupply` = 19
 
 ## `RewardErrorCode`
 

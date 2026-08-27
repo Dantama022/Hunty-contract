@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `nft-reward`: `initialize` now rejects `max_supply = Some(0)` with `NftErrorCode::InvalidMaxSupply` (code 19). Previously `Some(0)` was silently stored and caused every subsequent mint to panic with `MaxSupplyReached`, permanently bricking the contract.
+- `nft-reward`: `set_max_supply` now rejects `Some(0)` and any cap below the already-minted supply with `InvalidMaxSupply` instead of `Unauthorized`, giving callers a distinct, typed error.
+- `nft-reward`: Removed the `Some(0) => None` special-case from `get_remaining_supply`; `Some(0)` can no longer be stored, so the branch was dead code.
+
+### Removed
+
+- `nft-reward`: Removed duplicate alias entrypoints `get_nft_owner` and `get_total_nft_count`. Consumers should use the standard SEP-41/ERC-721 entrypoints `owner_of` and `total_supply`.
+
 <!-- New changes are automatically added here on each release tag via GitHub Actions -->
 
 ## [0.1.0] - 2026-06-02
