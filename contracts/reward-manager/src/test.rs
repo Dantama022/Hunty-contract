@@ -2401,12 +2401,7 @@ mod test {
         });
     }
 
-    // Ignored: soroban-sdk 22 exposes no immediate-caller API, so the
-    // authorized-contract allowlist cannot reject a foreign caller from inside
-    // distribute_rewards. This test documents the intended behaviour and should
-    // be re-enabled once the caller is threaded through the signature.
     #[test]
-    #[ignore = "authorized-caller gate needs an immediate-caller API not present in soroban-sdk 22"]
     fn test_unauthorized_contract_cannot_call_distribute() {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
@@ -2446,8 +2441,7 @@ mod test {
                 &Symbol::new(&env, "distribute_rewards"),
                 args,
             );
-            assert!(result.is_ok(), "invocation should succeed");
-            let _inner: Result<(), soroban_sdk::ConversionError> = result.unwrap();
+            assert_eq!(result, Err(Err(RewardErrorCode::Unauthorized)));
         });
     }
 
