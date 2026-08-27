@@ -1,9 +1,14 @@
 #![cfg_attr(not(test), no_std)]
+#![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Map,
-    String, Symbol, Val, Vec,
+    contract, contractimpl, contracttype, panic_with_error, Address, Env, Map, String, Symbol, Val,
+    Vec,
+};
+use hunty_common::audit::{
+    emit_audit_event, detail, ACTION_ADMIN_ADDED, ACTION_ADMIN_REMOVED, TOPIC_AUDIT,
 };
 
+#[allow(dead_code)]
 const MAX_URI_LEN: usize = 512;
 const MAX_NFT_TITLE_BYTES: u32 = 128;
 const MAX_NFT_DESCRIPTION_BYTES: u32 = 1024;
@@ -74,7 +79,18 @@ fn image_uri_is_valid(uri: &String) -> bool {
     // SAFETY: `buf` is populated from a soroban_sdk::String via
     // copy_into_slice, so the bytes are guaranteed to be valid UTF-8.
     let text = unsafe { core::str::from_utf8_unchecked(&buf[..len as usize]) };
-    text.starts_with("https://") || text.starts_with("ipfs://")
+
+    if text.starts_with("https://") {
+        // Require at least one non-whitespace character after the scheme.
+        let authority = &text[8..];
+        return !authority.is_empty() && !authority.bytes().all(|b| b == b' ');
+    }
+    if text.starts_with("ipfs://") {
+        // Require CID of at least 46 chars (IPFS v0 base58) after "ipfs://".
+        let cid = &text[7..];
+        return cid.len() >= 46;
+    }
+    false
 }
 
 /// Complete metadata returned by get_nft_metadata (includes NftData-derived fields).
@@ -139,6 +155,10 @@ pub struct NftMintedEvent {
     pub rarity: u32,
     pub tier: u32,
     pub minted_at: u64,
+    pub hunt_title: String,
+    pub total_minted_for_hunt: u32,
+    pub completion_rank: u32,
+    pub collection_stats: String,
 }
 
 /// Event emitted when an operator approval changes.
@@ -203,11 +223,48 @@ pub struct NftBurnedEvent {
     pub owner: Address,
 }
 
+/// Event emitted on contract initialization with admin, minter, and max supply details.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractInitializedEvent {
+    pub admin: Address,
+    pub minter: Address,
+    pub max_supply: Option<u64>,
+    pub timestamp: u64,
+}
+
+/// Event emitted when an authorized contract is added.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorizedContractAddedEvent {
+    pub admin: Address,
+    pub contract: Address,
+    pub timestamp: u64,
+}
+
+/// Event emitted when an authorized contract is removed.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorizedContractRemovedEvent {
+    pub admin: Address,
+    pub contract: Address,
+    pub timestamp: u64,
+}
+
+/// Event emitted when the reward manager contract is set.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RewardManagerSetEvent {
+    pub admin: Address,
+    pub reward_manager: Address,
+    pub timestamp: u64,
+}
+
 mod errors;
 pub use errors::NftErrorCode;
 mod migration;
 mod sanitization;
-mod storage;
+pub mod storage;
 #[cfg(test)]
 mod test;
 use storage::Storage;
@@ -241,6 +298,19 @@ impl NftReward {
         Storage::save_collection_metadata(&env, &collection_metadata);
         Storage::mark_initialized(&env);
         Storage::set_contract_version(&env, CONTRACT_VERSION);
+
+        // Emit initialization event
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (symbol_short!("INIT"), admin.clone()),
+            ContractInitializedEvent {
+                admin: admin.clone(),
+                minter: minter.clone(),
+                max_supply,
+                timestamp,
+            },
+        );
+
         Ok(())
     }
 
@@ -248,13 +318,20 @@ impl NftReward {
         admin.require_auth();
         let stored_admin =
             Storage::get_admin(env).ok_or(crate::errors::NftErrorCode::NotInitialized)?;
-        if stored_admin != admin.clone() {
+            if stored_admin != *admin {
             return Err(crate::errors::NftErrorCode::Unauthorized);
         }
         Ok(())
     }
 
     fn require_authorized_caller(env: &Env, caller: &Address) {
+        // Check the stored reward_manager address first.
+        if let Some(reward_manager) = Storage::get_reward_manager(env) {
+            if reward_manager == *caller {
+                caller.require_auth();
+                return;
+            }
+        }
         if Storage::has_authorized_contracts(env) {
             caller.require_auth();
             if !Storage::is_authorized_contract(env, caller) {
@@ -401,7 +478,7 @@ impl NftReward {
     }
 
     fn validate_extensions(
-        env: &Env,
+        _env: &Env,
         extensions: &Map<String, String>,
     ) -> Result<(), NftErrorCode> {
         let count = extensions.len();
@@ -417,6 +494,21 @@ impl NftReward {
             }
         }
         Ok(())
+    }
+
+    fn compute_completion_rank(
+        env: &Env,
+        hunt_id: u64,
+    ) -> u32 {
+        let players = Storage::get_hunt_players(env, hunt_id);
+        let mut completed: u32 = 0;
+        for i in 0..players.len() {
+            let progress = players.get(i).unwrap();
+            if progress.is_completed {
+                completed += 1;
+            }
+        }
+        completed.saturating_add(1)
     }
 
     fn mint_reward_nft_impl(
@@ -462,12 +554,22 @@ impl NftReward {
         let minted_at = env.ledger().timestamp();
         let nft_id = Storage::next_nft_id(&env);
 
+        let event = NftMintedEvent {
+            nft_id,
+            hunt_id,
+            owner: player_address.clone(),
+            rarity: metadata.rarity,
+            tier: metadata.tier,
+            minted_at,
+            metadata: metadata.clone(),
+        };
+
         let nft_data = NftData {
             nft_id,
             hunt_id,
             owner: player_address.clone(),
             completion_player: player_address.clone(),
-            metadata: metadata.clone(),
+            metadata,
             transferable,
             minted_at,
             locked: false,
@@ -487,6 +589,15 @@ impl NftReward {
             rarity: nft_data.metadata.rarity,
             tier: nft_data.metadata.tier,
             minted_at,
+            hunt_title: metadata.hunt_title.clone(),
+            total_minted_for_hunt: Storage::get_nft_counter(&env) as u32,
+            completion_rank: Self::compute_completion_rank(env, hunt_id),
+            collection_stats: format!(
+                "total_supply={},total_hunts={},total_owners={}",
+                Storage::get_nft_counter(&env),
+                0u64, // total_hunts would need tracking
+                0u64  // total_owners would need tracking
+            ),
         };
         env.events()
             .publish((Symbol::new(&env, "NftMinted"), nft_id), event);
@@ -660,6 +771,18 @@ impl NftReward {
     ) -> Result<(), crate::errors::NftErrorCode> {
         Self::require_admin(&env, &admin)?;
         Storage::save_reward_manager(&env, &reward_manager);
+
+        // Emit event for audit trail
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (symbol_short!("RWD_MGR"), admin.clone()),
+            RewardManagerSetEvent {
+                admin: admin.clone(),
+                reward_manager: reward_manager.clone(),
+                timestamp,
+            },
+        );
+
         Ok(())
     }
 
@@ -671,6 +794,18 @@ impl NftReward {
     ) -> Result<(), crate::errors::NftErrorCode> {
         Self::require_admin(&env, &admin)?;
         Storage::add_authorized_contract(&env, &contract);
+
+        // Emit event for audit trail
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (symbol_short!("AUTH_ADD"), admin.clone()),
+            AuthorizedContractAddedEvent {
+                admin: admin.clone(),
+                contract: contract.clone(),
+                timestamp,
+            },
+        );
+
         Ok(())
     }
 
@@ -682,9 +817,20 @@ impl NftReward {
     ) -> Result<(), crate::errors::NftErrorCode> {
         Self::require_admin(&env, &admin)?;
         Storage::remove_authorized_contract(&env, &contract);
+
+        // Emit event for audit trail
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (symbol_short!("AUTH_REM"), admin.clone()),
+            AuthorizedContractRemovedEvent {
+                admin: admin.clone(),
+                contract: contract.clone(),
+                timestamp,
+            },
+        );
+
         Ok(())
     }
-
     /// Batch-updates image URIs for all NFTs whose `image_uri` starts with `old_prefix`,
     /// replacing it with `new_prefix`. Useful for migrating between IPFS gateways or CDNs.
     ///
@@ -865,7 +1011,7 @@ impl NftReward {
     pub fn get_remaining_supply(env: Env) -> Option<u64> {
         match Storage::get_max_supply(&env) {
             None => None,
-            Some(max) if max == 0 => None, // explicit 0 ⟹ unlimited
+            Some(0) => None,
             Some(max) => {
                 let minted = Storage::get_nft_counter(&env);
                 Some(max.saturating_sub(minted))
@@ -1152,6 +1298,45 @@ impl NftReward {
     /// Returns the total number of NFTs minted for a hunt.
     pub fn get_hunt_nft_count(env: Env, hunt_id: u64) -> u32 {
         Storage::get_hunt_nft_count(&env, hunt_id)
+    }
+
+    /// Grants `operator` the ability to manage all NFTs owned by `owner`.
+    ///
+    /// # Authorization
+    /// `owner` must authorize this call.
+    pub fn set_operator(env: Env, owner: Address, operator: Address) {
+        owner.require_auth();
+        Storage::set_operator(&env, &owner, &operator);
+        env.events().publish(
+            (Symbol::new(&env, "OperatorChanged"),),
+            OperatorChangedEvent {
+                owner,
+                operator,
+                approved: true,
+            },
+        );
+    }
+
+    /// Revokes operator approval for `operator` over `owner`'s NFTs.
+    ///
+    /// # Authorization
+    /// `owner` must authorize this call.
+    pub fn remove_operator(env: Env, owner: Address, operator: Address) {
+        owner.require_auth();
+        Storage::remove_operator(&env, &owner, &operator);
+        env.events().publish(
+            (Symbol::new(&env, "OperatorChanged"),),
+            OperatorChangedEvent {
+                owner,
+                operator,
+                approved: false,
+            },
+        );
+    }
+
+    /// Returns true if `operator` is approved to manage all NFTs of `owner`.
+    pub fn is_operator(env: Env, owner: Address, operator: Address) -> bool {
+        Storage::is_operator(&env, &owner, &operator)
     }
 
     /// Burns (permanently destroys) an NFT, removing it from storage and the owner's list.
