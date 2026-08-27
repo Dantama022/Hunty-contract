@@ -3183,9 +3183,9 @@ pub mod errors;
 mod migration;
 mod monitoring;
 mod nft_handler;
-mod storage;
+pub mod storage;
 mod token_handler;
-mod types;
+pub mod types;
 mod xlm_handler;
 
 #[cfg(test)]

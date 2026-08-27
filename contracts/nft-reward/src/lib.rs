@@ -249,7 +249,7 @@ mod errors;
 pub use errors::NftErrorCode;
 mod migration;
 mod sanitization;
-mod storage;
+pub mod storage;
 #[cfg(test)]
 mod test;
 use storage::Storage;
@@ -1265,6 +1265,45 @@ impl NftReward {
     /// Returns the total number of NFTs minted for a hunt.
     pub fn get_hunt_nft_count(env: Env, hunt_id: u64) -> u32 {
         Storage::get_hunt_nft_count(&env, hunt_id)
+    }
+
+    /// Grants `operator` the ability to manage all NFTs owned by `owner`.
+    ///
+    /// # Authorization
+    /// `owner` must authorize this call.
+    pub fn set_operator(env: Env, owner: Address, operator: Address) {
+        owner.require_auth();
+        Storage::set_operator(&env, &owner, &operator);
+        env.events().publish(
+            (Symbol::new(&env, "OperatorChanged"),),
+            OperatorChangedEvent {
+                owner,
+                operator,
+                approved: true,
+            },
+        );
+    }
+
+    /// Revokes operator approval for `operator` over `owner`'s NFTs.
+    ///
+    /// # Authorization
+    /// `owner` must authorize this call.
+    pub fn remove_operator(env: Env, owner: Address, operator: Address) {
+        owner.require_auth();
+        Storage::remove_operator(&env, &owner, &operator);
+        env.events().publish(
+            (Symbol::new(&env, "OperatorChanged"),),
+            OperatorChangedEvent {
+                owner,
+                operator,
+                approved: false,
+            },
+        );
+    }
+
+    /// Returns true if `operator` is approved to manage all NFTs of `owner`.
+    pub fn is_operator(env: Env, owner: Address, operator: Address) -> bool {
+        Storage::is_operator(&env, &owner, &operator)
     }
 
     /// Burns (permanently destroys) an NFT, removing it from storage and the owner's list.
