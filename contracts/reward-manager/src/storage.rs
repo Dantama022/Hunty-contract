@@ -32,6 +32,7 @@ impl Storage {
     const POOL_CFG_KEY: soroban_sdk::Symbol = symbol_short!("PCFG");
     const POOL_DEP_KEY: soroban_sdk::Symbol = symbol_short!("PDEP");
     const POOL_DST_KEY: soroban_sdk::Symbol = symbol_short!("PDST");
+    const POOL_RFD_KEY: soroban_sdk::Symbol = symbol_short!("PRFD");
     const POOL_DIST_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("PDCNT");
     const POOL_LAST_DIST_TS_KEY: soroban_sdk::Symbol = symbol_short!("PLDTS");
     const POOL_DISTRIBUTIONS_KEY: soroban_sdk::Symbol = symbol_short!("PLDIST");
@@ -42,8 +43,13 @@ impl Storage {
     const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("AUDC");
     const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("AUDL");
     const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
+    // Granular pause flags (issue #628), mirroring the per-operation pauses
+    // hunty-core already exposes. The global PAUSED_KEY above still overrides
+    // both, so an emergency stop remains a single call.
+    const PAUSE_FUNDING_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE_FD");
+    const PAUSE_DIST_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE_DS");
     const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
-    
+
     pub const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
 
     // ========== Vesting ==========
@@ -60,7 +66,9 @@ impl Storage {
     }
 
     pub fn set_pending_admin(env: &Env, address: &Address) {
-        env.storage().persistent().set(&Self::PENDING_ADMIN_KEY, address);
+        env.storage()
+            .persistent()
+            .set(&Self::PENDING_ADMIN_KEY, address);
     }
 
     pub fn get_pending_admin(env: &Env) -> Option<Address> {
@@ -199,7 +207,6 @@ impl Storage {
         result
     }
 
-
     fn distribution_record_key(
         hunt_id: u64,
         player: &Address,
@@ -329,6 +336,16 @@ impl Storage {
 
     pub fn get_pool_total_distributed(env: &Env, hunt_id: u64) -> i128 {
         let key = Self::pool_dst_key(hunt_id);
+        env.storage().persistent().get(&key).unwrap_or(0)
+    }
+
+    pub fn set_pool_total_refunded(env: &Env, hunt_id: u64, amount: i128) {
+        let key = Self::pool_rfd_key(hunt_id);
+        env.storage().persistent().set(&key, &amount);
+    }
+
+    pub fn get_pool_total_refunded(env: &Env, hunt_id: u64) -> i128 {
+        let key = Self::pool_rfd_key(hunt_id);
         env.storage().persistent().get(&key).unwrap_or(0)
     }
 
@@ -489,6 +506,10 @@ impl Storage {
         (Self::POOL_DST_KEY, hunt_id)
     }
 
+    fn pool_rfd_key(hunt_id: u64) -> (soroban_sdk::Symbol, u64) {
+        (Self::POOL_RFD_KEY, hunt_id)
+    }
+
     fn pool_distributions_key(hunt_id: u64) -> (soroban_sdk::Symbol, u64) {
         (Self::POOL_DISTRIBUTIONS_KEY, hunt_id)
     }
@@ -533,6 +554,59 @@ impl Storage {
             .instance()
             .get(&Self::PAUSED_KEY)
             .unwrap_or(false)
+    }
+
+    // ---- Granular pause flags (issue #628) ----
+    //
+    // `hunty-core` can pause registrations, answers and rewards independently.
+    // reward-manager had a single flag, so stopping a suspect distribution also
+    // stopped creators topping their pools up. These split the two halves.
+
+    pub fn set_funding_paused(env: &Env, paused: bool) {
+        env.storage()
+            .instance()
+            .set(&Self::PAUSE_FUNDING_KEY, &paused);
+    }
+
+    /// True when funding is blocked, either by its own flag or by the global stop.
+    pub fn is_funding_paused(env: &Env) -> bool {
+        Self::is_paused(env)
+            || env
+                .storage()
+                .instance()
+                .get(&Self::PAUSE_FUNDING_KEY)
+                .unwrap_or(false)
+    }
+
+    pub fn set_distribution_paused(env: &Env, paused: bool) {
+        env.storage().instance().set(&Self::PAUSE_DIST_KEY, &paused);
+    }
+
+    /// True when distribution is blocked, either by its own flag or by the
+    /// global stop.
+    pub fn is_distribution_paused(env: &Env) -> bool {
+        Self::is_paused(env)
+            || env
+                .storage()
+                .instance()
+                .get(&Self::PAUSE_DIST_KEY)
+                .unwrap_or(false)
+    }
+
+    /// The two granular flags on their own, ignoring the global stop. Used by
+    /// `get_pause_state` so an operator can tell a granular pause apart from an
+    /// emergency stop.
+    pub fn raw_pause_flags(env: &Env) -> (bool, bool) {
+        (
+            env.storage()
+                .instance()
+                .get(&Self::PAUSE_FUNDING_KEY)
+                .unwrap_or(false),
+            env.storage()
+                .instance()
+                .get(&Self::PAUSE_DIST_KEY)
+                .unwrap_or(false),
+        )
     }
 
     pub fn log_emergency_withdrawal(env: &Env, log_entry: &crate::EmergencyWithdrawalLogEntry) {
@@ -592,12 +666,7 @@ impl Storage {
 
     /// Stores a vesting record for a (hunt_id, player) pair.
     /// Called at distribution time when vesting_period_secs > 0.
-    pub fn set_vesting_record(
-        env: &Env,
-        hunt_id: u64,
-        player: &Address,
-        record: &VestingRecord,
-    ) {
+    pub fn set_vesting_record(env: &Env, hunt_id: u64, player: &Address, record: &VestingRecord) {
         let key = Self::vesting_key(hunt_id, player);
         env.storage().persistent().set(&key, record);
     }

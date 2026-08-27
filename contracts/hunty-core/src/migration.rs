@@ -10,6 +10,9 @@ pub use hunty_migration::MigrationReport;
 /// Per-contract migration steps for HuntyCore storage layouts.
 pub struct HuntyCoreMigration;
 
+// Upgrade lifecycle helpers are exercised by the migration framework and
+// integration tests rather than this crate's entry points.
+#[allow(dead_code)]
 impl HuntyCoreMigration {
     pub fn get_schema_version(env: &Env) -> u32 {
         MigrationFramework::detect_version(env)
@@ -261,7 +264,7 @@ impl HuntyCoreMigration {
                 }
             }
             // Only save if there are required clues to avoid unnecessary storage writes
-            if required_ids.len() > 0 {
+            if !required_ids.is_empty() {
                 Storage::set_required_clues(env, hunt_id, &required_ids);
             }
         }

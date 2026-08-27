@@ -183,6 +183,39 @@ pub struct HuntArchivedEvent {
     pub hunt_id: u64,
 }
 
+/// Result of a `gc_hunt` sweep (issue #446).
+///
+/// Counts are split by storage tier because the two are charged and expire
+/// differently on Soroban: instance entries share the contract's own TTL, while
+/// persistent entries each carry their own. An operator reclaiming space needs
+/// to see which tier actually shrank.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct GcReport {
+    pub hunt_id: u64,
+    /// Entries removed from persistent storage.
+    pub persistent_removed: u32,
+    /// Entries removed from instance storage.
+    pub instance_removed: u32,
+    /// `persistent_removed + instance_removed`.
+    pub total_removed: u32,
+    /// Players whose per-hunt entries were swept.
+    pub players_swept: u32,
+    /// Clues whose per-hunt entries were swept.
+    pub clues_swept: u32,
+    /// Teams whose per-hunt entries were swept.
+    pub teams_swept: u32,
+}
+
+/// Emitted once a cancelled or archived hunt's storage has been reclaimed.
+#[contracttype]
+#[derive(Clone)]
+pub struct HuntGarbageCollectedEvent {
+    pub hunt_id: u64,
+    pub total_removed: u32,
+    pub collected_at: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Location {
@@ -262,9 +295,10 @@ impl PlayerProgress {
         }
     }
 
-    /// Pack boolean flags into a u32 bitmask
-    pub fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u32 {
-        let mut flags = 0u32;
+    /// Pack boolean flags into a single byte
+    #[allow(dead_code)]
+    fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u8 {
+        let mut flags = 0u8;
         if is_completed {
             flags |= 0x01;
         }
@@ -584,6 +618,16 @@ pub struct AnswerIncorrectEvent {
     pub hunt_id: u64,
     pub player: Address,
     pub clue_id: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AnswerPreviewedEvent {
+    pub hunt_id: u64,
+    pub player: Address,
+    pub clue_id: u32,
+    pub is_correct: bool,
     pub timestamp: u64,
 }
 
