@@ -2877,12 +2877,12 @@ pub fn register_with_invite(env: Env, hunt_id: u64, player: Address, invite_code
 
 #### `preview_answer`
 
-Verifies a candidate answer without recording progress or emitting events.
+Verifies a candidate answer for a registered player with authorization and rate limiting.
 
 **Signature:**
 
 ```rust
-pub fn preview_answer(env: Env, hunt_id: u64, clue_id: u32, player: Address, answer: String) -> bool
+pub fn preview_answer(env: Env, hunt_id: u64, clue_id: u32, player: Address, answer: String) -> Result<bool, HuntErrorCode>
 ```
 
 **Parameters:**
@@ -2893,7 +2893,9 @@ pub fn preview_answer(env: Env, hunt_id: u64, clue_id: u32, player: Address, ans
 - `player: Address`
 - `answer: String`
 
-**Returns:** `bool`
+**Returns:** `Result<bool, HuntErrorCode>`
+
+**Error type:** `HuntErrorCode`
 
 ---
 

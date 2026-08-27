@@ -1,7 +1,7 @@
 use crate::errors::HuntError;
 use crate::types::{
-    Clue, Hunt, HuntCache, HuntStatus, LeaderboardIndexEntry, PlayerProgress, RewardConfig,
-    StoredPlayerProgress, Team, TeamProgress,
+    Clue, GcReport, Hunt, HuntCache, HuntStatus, LeaderboardIndexEntry, PlayerProgress,
+    RewardConfig, StoredPlayerProgress, Team, TeamProgress,
 };
 use soroban_sdk::xdr::FromXdr;
 use soroban_sdk::{contracttype, symbol_short, Address, Env, IntoVal, TryFromVal, Val, Vec};
@@ -54,6 +54,9 @@ pub fn extend_ttl<K: IntoVal<Env, soroban_sdk::Val>>(env: &Env, key: &K, policy:
         .extend_ttl(key, threshold, extend_to);
 }
 
+// Several helpers and key constants are reserved for upcoming modules and the
+// migration framework; keep them without triggering dead-code warnings.
+#[allow(dead_code)]
 impl Storage {
     // Symbol constants for key prefixes to prevent collisions
     // Using symbol_short for efficient key generation
@@ -507,9 +510,9 @@ impl Storage {
     ///
     /// # Returns
     /// * `Some(PlayerProgress)` if progress exists, `None` otherwise
-    /// Safely attempts to retrieve and deserialize player progress.
-    /// Returns `Ok(None)` if not registered, `Ok(Some(progress))` if successful,
-    /// or `Err(HuntError::CorruptPlayerProgress)` if storage deserialization fails.
+    ///   Safely attempts to retrieve and deserialize player progress.
+    ///   Returns `Ok(None)` if not registered, `Ok(Some(progress))` if successful,
+    ///   or `Err(HuntError::CorruptPlayerProgress)` if storage deserialization fails.
     pub fn try_get_player_progress(
         env: &Env,
         hunt_id: u64,
@@ -1075,18 +1078,6 @@ impl Storage {
 
     // --- Contract version ---
 
-    #[allow(dead_code)]
-    pub fn set_contract_version(env: &Env, version: u32) {
-        env.storage()
-            .instance()
-            .set(&symbol_short!("CVER"), &version);
-    }
-
-    #[allow(dead_code)]
-    pub fn get_contract_version(env: &Env) -> Option<u32> {
-        env.storage().instance().get(&symbol_short!("CVER"))
-    }
-
     // ========== View-Only Access Functions ==========
 
     /// Adds an address to the view-only list for a specific hunt.
@@ -1498,5 +1489,236 @@ impl Storage {
             return co_creators.first_index_of(caller).is_some();
         }
         false
+    }
+
+    // ========== Storage Garbage Collection (issue #446) ==========
+    //
+    // Soroban has no key-prefix scan, so a hunt's entries cannot be discovered
+    // at runtime — they have to be reconstructed from the same key builders
+    // that wrote them. That makes this function the authoritative inventory of
+    // everything a hunt owns.
+    //
+    // **If you add a per-hunt storage key, add it here too**, and to the table
+    // in `docs/STORAGE_KEYS.md`. A key missing from this list is a permanent
+    // leak: once the hunt row is gone there is nothing left to enumerate it
+    // from.
+    //
+    // Counters (`player_count`, `clue_list_count`, `team_count`) are read
+    // *before* anything is removed and are deleted last, because they are what
+    // the per-entity loops iterate over.
+
+    /// Removes a single persistent key if present, counting the removal.
+    fn gc_remove_persistent<K: IntoVal<Env, Val>>(env: &Env, key: &K, count: &mut u32) {
+        if env.storage().persistent().has(key) {
+            env.storage().persistent().remove(key);
+            *count = count.saturating_add(1);
+        }
+    }
+
+    /// Removes a single instance key if present, counting the removal.
+    fn gc_remove_instance<K: IntoVal<Env, Val>>(env: &Env, key: &K, count: &mut u32) {
+        if env.storage().instance().has(key) {
+            env.storage().instance().remove(key);
+            *count = count.saturating_add(1);
+        }
+    }
+
+    /// Reports how many storage entries a hunt currently owns, without removing
+    /// anything. Lets a caller size a sweep before committing to it, and gives
+    /// the tests a way to assert that a sweep actually reached zero.
+    pub fn count_hunt_storage_entries(env: &Env, hunt_id: u64) -> GcReport {
+        Self::sweep_hunt_storage(env, hunt_id, false)
+    }
+
+    /// Removes every storage entry belonging to `hunt_id` and reports what went.
+    ///
+    /// Callers are responsible for authorisation and for checking hunt status —
+    /// see `HuntyCore::gc_hunt`. This layer is deliberately unconditional so it
+    /// can also be exercised directly by tests.
+    pub fn gc_hunt_storage(env: &Env, hunt_id: u64) -> GcReport {
+        Self::sweep_hunt_storage(env, hunt_id, true)
+    }
+
+    /// Shared walk over a hunt's key surface.
+    ///
+    /// `remove = false` counts what exists; `remove = true` deletes it. Keeping
+    /// both behaviours in one function is what stops the counter and the
+    /// collector from drifting apart as keys are added.
+    fn sweep_hunt_storage(env: &Env, hunt_id: u64, remove: bool) -> GcReport {
+        let mut persistent_removed: u32 = 0;
+        let mut instance_removed: u32 = 0;
+
+        // Read the counters first — the loops below depend on them.
+        let player_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&Self::player_count_key(hunt_id))
+            .unwrap_or(0);
+        let clue_count: u32 = env
+            .storage()
+            .instance()
+            .get(&Self::clue_list_count_key(hunt_id))
+            .unwrap_or(0);
+        let team_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&Self::team_count_key(hunt_id))
+            .unwrap_or(0);
+
+        // ── Per-player entries ────────────────────────────────────────────
+        for index in 0..player_count {
+            let entry_key = Self::player_entry_key(hunt_id, index);
+            let player: Option<Address> = env.storage().persistent().get(&entry_key);
+
+            if let Some(player) = player {
+                // progress, team membership, ban flag and the O(1) exist marker
+                let progress = Self::progress_key(hunt_id, &player);
+                let player_team = Self::player_team_key(hunt_id, &player);
+                let ban = Self::ban_key(hunt_id, &player);
+                let exists = (symbol_short!("PLEX"), hunt_id, player.clone());
+
+                if remove {
+                    Self::gc_remove_persistent(env, &progress, &mut persistent_removed);
+                    Self::gc_remove_persistent(env, &player_team, &mut persistent_removed);
+                    Self::gc_remove_persistent(env, &ban, &mut persistent_removed);
+                    Self::gc_remove_persistent(env, &exists, &mut persistent_removed);
+                } else {
+                    for key in [&progress, &player_team] {
+                        if env.storage().persistent().has(key) {
+                            persistent_removed = persistent_removed.saturating_add(1);
+                        }
+                    }
+                    if env.storage().persistent().has(&ban) {
+                        persistent_removed = persistent_removed.saturating_add(1);
+                    }
+                    if env.storage().persistent().has(&exists) {
+                        persistent_removed = persistent_removed.saturating_add(1);
+                    }
+                }
+            }
+
+            if remove {
+                Self::gc_remove_persistent(env, &entry_key, &mut persistent_removed);
+            } else if env.storage().persistent().has(&entry_key) {
+                persistent_removed = persistent_removed.saturating_add(1);
+            }
+        }
+
+        // ── Per-clue entries ──────────────────────────────────────────────
+        for index in 0..clue_count {
+            let entry_key = Self::clue_entry_key(hunt_id, index);
+            let clue_id: Option<u32> = env.storage().instance().get(&entry_key);
+
+            if let Some(clue_id) = clue_id {
+                let clue = Self::clue_key(hunt_id, clue_id);
+                let clue_exists = Self::clue_exists_key(hunt_id, clue_id);
+
+                if remove {
+                    Self::gc_remove_persistent(env, &clue, &mut persistent_removed);
+                    Self::gc_remove_instance(env, &clue_exists, &mut instance_removed);
+                } else {
+                    if env.storage().persistent().has(&clue) {
+                        persistent_removed = persistent_removed.saturating_add(1);
+                    }
+                    if env.storage().instance().has(&clue_exists) {
+                        instance_removed = instance_removed.saturating_add(1);
+                    }
+                }
+            }
+
+            if remove {
+                Self::gc_remove_instance(env, &entry_key, &mut instance_removed);
+            } else if env.storage().instance().has(&entry_key) {
+                instance_removed = instance_removed.saturating_add(1);
+            }
+        }
+
+        // ── Per-team entries ──────────────────────────────────────────────
+        // Team ids are handed out sequentially from 1 by `next_team_id`.
+        for team_id in 1..=team_count {
+            let team = Self::team_key(hunt_id, team_id);
+            let progress = Self::team_progress_key(hunt_id, team_id);
+
+            if remove {
+                Self::gc_remove_persistent(env, &team, &mut persistent_removed);
+                Self::gc_remove_persistent(env, &progress, &mut persistent_removed);
+            } else {
+                if env.storage().persistent().has(&team) {
+                    persistent_removed = persistent_removed.saturating_add(1);
+                }
+                if env.storage().persistent().has(&progress) {
+                    persistent_removed = persistent_removed.saturating_add(1);
+                }
+            }
+        }
+
+        // ── Hunt-level persistent keys ────────────────────────────────────
+        let hunt = Self::hunt_key(hunt_id);
+        let leaderboard = Self::leaderboard_key(hunt_id);
+        let required_clues = Self::required_clues_key(hunt_id);
+        let clue_counter = Self::clue_counter_key(hunt_id);
+        let player_count_key = Self::player_count_key(hunt_id);
+        let team_count_key = Self::team_count_key(hunt_id);
+
+        // ── Hunt-level instance keys ──────────────────────────────────────
+        let cache = Self::hunt_cache_key(hunt_id);
+        let view_only = Self::view_only_key(hunt_id);
+        let clue_list_count = Self::clue_list_count_key(hunt_id);
+        let co_creators = (symbol_short!("COCRTR"), hunt_id);
+
+        if remove {
+            Self::gc_remove_persistent(env, &hunt, &mut persistent_removed);
+            Self::gc_remove_persistent(env, &leaderboard, &mut persistent_removed);
+            Self::gc_remove_persistent(env, &required_clues, &mut persistent_removed);
+            Self::gc_remove_persistent(env, &clue_counter, &mut persistent_removed);
+            Self::gc_remove_persistent(env, &player_count_key, &mut persistent_removed);
+            Self::gc_remove_persistent(env, &team_count_key, &mut persistent_removed);
+
+            Self::gc_remove_instance(env, &cache, &mut instance_removed);
+            Self::gc_remove_instance(env, &view_only, &mut instance_removed);
+            Self::gc_remove_instance(env, &clue_list_count, &mut instance_removed);
+            Self::gc_remove_instance(env, &co_creators, &mut instance_removed);
+        } else {
+            if env.storage().persistent().has(&hunt) {
+                persistent_removed = persistent_removed.saturating_add(1);
+            }
+            if env.storage().persistent().has(&leaderboard) {
+                persistent_removed = persistent_removed.saturating_add(1);
+            }
+            if env.storage().persistent().has(&required_clues) {
+                persistent_removed = persistent_removed.saturating_add(1);
+            }
+            if env.storage().persistent().has(&clue_counter) {
+                persistent_removed = persistent_removed.saturating_add(1);
+            }
+            if env.storage().persistent().has(&player_count_key) {
+                persistent_removed = persistent_removed.saturating_add(1);
+            }
+            if env.storage().persistent().has(&team_count_key) {
+                persistent_removed = persistent_removed.saturating_add(1);
+            }
+            if env.storage().instance().has(&cache) {
+                instance_removed = instance_removed.saturating_add(1);
+            }
+            if env.storage().instance().has(&view_only) {
+                instance_removed = instance_removed.saturating_add(1);
+            }
+            if env.storage().instance().has(&clue_list_count) {
+                instance_removed = instance_removed.saturating_add(1);
+            }
+            if env.storage().instance().has(&co_creators) {
+                instance_removed = instance_removed.saturating_add(1);
+            }
+        }
+
+        GcReport {
+            hunt_id,
+            persistent_removed,
+            instance_removed,
+            total_removed: persistent_removed.saturating_add(instance_removed),
+            players_swept: player_count,
+            clues_swept: clue_count,
+            teams_swept: team_count,
+        }
     }
 }
