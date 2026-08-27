@@ -290,6 +290,8 @@ impl NftReward {
 
         Storage::save_admin(&env, &admin);
         Storage::add_minter(&env, &minter);
+        // Ensure the initial minter is also enrolled as an authorized contract
+        Storage::add_authorized_contract(&env, &minter);
         Storage::set_max_supply(&env, max_supply);
         Storage::save_collection_metadata(&env, &collection_metadata);
         Storage::mark_initialized(&env);
@@ -328,11 +330,11 @@ impl NftReward {
                 return;
             }
         }
-        if Storage::has_authorized_contracts(env) {
-            caller.require_auth();
-            if !Storage::is_authorized_contract(env, caller) {
-                panic_with_error!(env, crate::errors::NftErrorCode::Unauthorized);
-            }
+        // Always require the caller to authorize the operation.
+        caller.require_auth();
+        // Fail-closed: caller must be explicitly authorized.
+        if !Storage::is_authorized_contract(env, caller) {
+            panic_with_error!(env, crate::errors::NftErrorCode::Unauthorized);
         }
     }
 
