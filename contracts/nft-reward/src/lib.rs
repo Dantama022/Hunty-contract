@@ -550,12 +550,22 @@ impl NftReward {
         let minted_at = env.ledger().timestamp();
         let nft_id = Storage::next_nft_id(&env);
 
+        let event = NftMintedEvent {
+            nft_id,
+            hunt_id,
+            owner: player_address.clone(),
+            rarity: metadata.rarity,
+            tier: metadata.tier,
+            minted_at,
+            metadata: metadata.clone(),
+        };
+
         let nft_data = NftData {
             nft_id,
             hunt_id,
             owner: player_address.clone(),
             completion_player: player_address.clone(),
-            metadata: metadata.clone(),
+            metadata,
             transferable,
             minted_at,
             locked: false,
