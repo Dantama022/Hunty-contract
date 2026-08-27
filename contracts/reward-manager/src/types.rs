@@ -126,6 +126,12 @@ pub struct RewardPoolConfig {
     pub vesting_period_secs: u64,
     /// Unix timestamp after which claims are no longer allowed (0 = disabled).
     pub claim_deadline: u64,
+    /// Creator royalty basis points (0-10000) for NFT secondary market sales.
+    /// Only applied when minting reward NFTs from this pool.
+    pub nft_royalty_bps: u32,
+    /// Whether reward NFTs minted from this pool are transferable.
+    /// If false, NFTs are soulbound to the initial recipient.
+    pub nft_transferable: bool,
 }
 
 /// Full status of a reward pool, returned by get_reward_pool().
@@ -186,9 +192,9 @@ pub enum PoolOperation {
     Unfreeze,
     /// Unused balance was migrated out to (or into) another hunt's pool.
     Migrate,
+    /// Pool balance was refunded to the pool creator.
+    Refund,
 }
-
-/// Resolution status for admin-resolved distributions.
 
 /// Comprehensive statistics for a reward pool, returned by get_pool_statistics().
 #[contracttype]

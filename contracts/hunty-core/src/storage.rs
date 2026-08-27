@@ -54,6 +54,9 @@ pub fn extend_ttl<K: IntoVal<Env, soroban_sdk::Val>>(env: &Env, key: &K, policy:
         .extend_ttl(key, threshold, extend_to);
 }
 
+// Several helpers and key constants are reserved for upcoming modules and the
+// migration framework; keep them without triggering dead-code warnings.
+#[allow(dead_code)]
 impl Storage {
     // Symbol constants for key prefixes to prevent collisions
     // Using symbol_short for efficient key generation
@@ -507,9 +510,9 @@ impl Storage {
     ///
     /// # Returns
     /// * `Some(PlayerProgress)` if progress exists, `None` otherwise
-    /// Safely attempts to retrieve and deserialize player progress.
-    /// Returns `Ok(None)` if not registered, `Ok(Some(progress))` if successful,
-    /// or `Err(HuntError::CorruptPlayerProgress)` if storage deserialization fails.
+    ///   Safely attempts to retrieve and deserialize player progress.
+    ///   Returns `Ok(None)` if not registered, `Ok(Some(progress))` if successful,
+    ///   or `Err(HuntError::CorruptPlayerProgress)` if storage deserialization fails.
     pub fn try_get_player_progress(
         env: &Env,
         hunt_id: u64,
@@ -1074,18 +1077,6 @@ impl Storage {
     }
 
     // --- Contract version ---
-
-    #[allow(dead_code)]
-    pub fn set_contract_version(env: &Env, version: u32) {
-        env.storage()
-            .instance()
-            .set(&symbol_short!("CVER"), &version);
-    }
-
-    #[allow(dead_code)]
-    pub fn get_contract_version(env: &Env) -> Option<u32> {
-        env.storage().instance().get(&symbol_short!("CVER"))
-    }
 
     // ========== View-Only Access Functions ==========
 

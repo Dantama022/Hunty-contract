@@ -224,7 +224,6 @@ pub struct Location {
     pub radius: u32,
 }
 
-
 /// Internal compact storage representation of player progress.
 /// Does not store `player` or `hunt_id` — those are already the storage key.
 ///
@@ -257,8 +256,6 @@ pub struct StoredPlayerProgress {
     pub clue_last_attempts: Map<u32, u64>,
     pub required_completed_count: u32,
 }
-
-
 
 /// Public view of player progress, with `player` and `hunt_id` reconstructed from the key.
 #[contracttype]
@@ -299,6 +296,7 @@ impl PlayerProgress {
     }
 
     /// Pack boolean flags into a single byte
+    #[allow(dead_code)]
     fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u8 {
         let mut flags = 0u8;
         if is_completed {
@@ -626,6 +624,16 @@ pub struct AnswerIncorrectEvent {
     pub hunt_id: u64,
     pub player: Address,
     pub clue_id: u32,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AnswerPreviewedEvent {
+    pub hunt_id: u64,
+    pub player: Address,
+    pub clue_id: u32,
+    pub is_correct: bool,
     pub timestamp: u64,
 }
 
