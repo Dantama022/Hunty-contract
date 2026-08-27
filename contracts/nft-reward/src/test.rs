@@ -226,6 +226,38 @@ fn test_collection_metadata_is_set_during_initialization_and_updates_supply() {
 }
 
 #[test]
+fn test_mint_reward_nft_rejects_empty_image_uri_consistently() {
+    let env = setup_env();
+    let (client, minter) = setup_nft_reward(&env, None);
+    let player = Address::generate(&env);
+
+    let empty_metadata = create_metadata(&env, "Hunt Champion", "Completed the City Hunt", "");
+    let direct_err = client
+        .try_mint_reward_nft(&minter, &1, &player, &empty_metadata)
+        .unwrap_err();
+    assert_eq!(direct_err, Ok(NftErrorCode::InvalidMetadata));
+
+    let mut map: Map<Symbol, Val> = Map::new(&env);
+    map.set(
+        Symbol::new(&env, "title"),
+        String::from_str(&env, "Hunt Champion").into_val(&env),
+    );
+    map.set(
+        Symbol::new(&env, "description"),
+        String::from_str(&env, "Completed the City Hunt").into_val(&env),
+    );
+    map.set(
+        Symbol::new(&env, "image_uri"),
+        String::from_str(&env, "").into_val(&env),
+    );
+
+    let map_err = client
+        .try_mint_reward_nft_from_map(&minter, &1, &player, &map)
+        .unwrap_err();
+    assert_eq!(map_err, Ok(NftErrorCode::InvalidMetadata));
+}
+
+#[test]
 fn test_mint_reward_nft() {
     let env = setup_env();
     let (client, minter) = setup_nft_reward(&env, None);

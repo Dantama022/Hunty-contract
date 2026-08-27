@@ -404,10 +404,6 @@ impl NftReward {
             .and_then(|v| String::try_from_val(&env, &v).ok())
             .unwrap_or_else(|| String::from_str(&env, ""));
 
-        if !image_uri_is_valid(&image_uri) {
-            panic!("Invalid NFT image_uri: must be non-empty");
-        }
-
         let hunt_title = metadata
             .get(Symbol::new(&env, "hunt_title"))
             .and_then(|v| String::try_from_val(&env, &v).ok())
@@ -417,10 +413,6 @@ impl NftReward {
             .get(Symbol::new(&env, "rarity"))
             .and_then(|v| u32::try_from_val(&env, &v).ok())
             .unwrap_or(0u32);
-
-        if rarity > 5 {
-            panic!("InvalidRarity");
-        }
 
         let tier = metadata
             .get(Symbol::new(&env, "tier"))
@@ -459,6 +451,13 @@ impl NftReward {
             extensions,
         };
         Self::mint_reward_nft_impl(env, hunt_id, player_address, meta, transferable)
+    }
+
+    fn validate_image_uri(env: &Env, value: &String) -> Result<(), NftErrorCode> {
+        if !image_uri_is_valid(value) {
+            return Err(NftErrorCode::InvalidMetadata);
+        }
+        Ok(())
     }
 
     fn sanitize_metadata_field(
@@ -516,6 +515,9 @@ impl NftReward {
     ) -> u64 {
         if metadata.rarity > 5 {
             panic_with_error!(&env, crate::errors::NftErrorCode::InvalidRarity);
+        }
+        if let Err(e) = Self::validate_image_uri(&env, &metadata.image_uri) {
+            panic_with_error!(&env, e);
         }
 
         // Validate extensions
