@@ -1570,6 +1570,65 @@ impl HuntyCore {
         Ok(())
     }
 
+    /// Reclaims the storage of a cancelled or archived hunt (issue #446).
+    ///
+    /// A cancelled hunt keeps every clue, player-progress, team, leaderboard
+    /// and bookkeeping entry it ever wrote. Nothing referenced those entries
+    /// any more, but nothing removed them either, so they sat in persistent
+    /// storage paying rent until their TTL lapsed.
+    ///
+    /// Only `Cancelled` and `Archived` hunts may be collected — those are the
+    /// two terminal states. Anything else is rejected with `InvalidHuntStatus`,
+    /// because collecting a live hunt would destroy player progress.
+    ///
+    /// The sweep is **idempotent**: running it twice reports zero the second
+    /// time rather than failing, so an interrupted call is safe to retry.
+    ///
+    /// # Authorization
+    /// The hunt creator or the contract admin.
+    ///
+    /// # Returns
+    /// A [`GcReport`] describing what was reclaimed.
+    pub fn gc_hunt(env: Env, hunt_id: u64, caller: Address) -> Result<GcReport, HuntErrorCode> {
+        caller.require_auth();
+
+        // Read status from the full record rather than the instance cache: the
+        // cache entry is itself one of the things this function deletes, so a
+        // retry after a partial sweep must not depend on it.
+        let hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
+
+        let is_creator = caller == hunt.creator;
+        let is_admin = Storage::get_admin(&env) == Some(caller.clone());
+        if !is_creator && !is_admin {
+            return Err(HuntErrorCode::Unauthorized);
+        }
+
+        if hunt.status != HuntStatus::Cancelled && hunt.status != HuntStatus::Archived {
+            return Err(HuntErrorCode::InvalidHuntStatus);
+        }
+
+        let report = Storage::gc_hunt_storage(&env, hunt_id);
+
+        let collected_at = env.ledger().timestamp();
+        env.events().publish(
+            (Symbol::new(&env, "HuntGarbageCollected"), hunt_id),
+            HuntGarbageCollectedEvent {
+                hunt_id,
+                total_removed: report.total_removed,
+                collected_at,
+            },
+        );
+
+        Ok(report)
+    }
+
+    /// Reports how much storage a hunt currently occupies, without removing
+    /// anything. Read-only, so it needs no authorization — hunt existence and
+    /// size are already public via `get_hunt_info`.
+    pub fn get_hunt_storage_footprint(env: Env, hunt_id: u64) -> GcReport {
+        Storage::count_hunt_storage_entries(&env, hunt_id)
+    }
+
     pub fn get_hunt_info(env: Env, hunt_id: u64) -> Result<Hunt, HuntErrorCode> {
         let hunt = Storage::get_hunt(&env, hunt_id).ok_or(HuntErrorCode::HuntNotFound)?;
 

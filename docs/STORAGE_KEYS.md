@@ -20,6 +20,12 @@ A CI/script check (`scripts/ci/check_storage_keys_doc.sh`) asserts that every
 
 ## hunty-core (`contracts/hunty-core/src/storage.rs`)
 
+> **Garbage collection (issue #446).** Soroban cannot scan by key prefix, so
+> `Storage::sweep_hunt_storage` reconstructs a hunt's entries from the same key
+> builders that wrote them. Any **per-hunt** key added below must also be added
+> to that function, or it becomes a permanent leak: once the hunt record is gone
+> there is nothing left to enumerate it from.
+
 | Constant | Symbol | Shape / notes |
 |---|---|---|
 | `HUNT_KEY` | `HUNT` | `(HUNT, hunt_id)` — hunt record |

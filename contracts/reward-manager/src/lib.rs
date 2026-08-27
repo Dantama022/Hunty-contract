@@ -897,6 +897,9 @@ impl RewardManager {
         hunt_id: u64,
         amount: i128,
     ) -> Result<(), RewardErrorCode> {
+        // Issue #628: funding is blocked by its own pause flag or the global stop.
+        Self::ensure_funding_allowed(&env)?;
+
         if amount <= 0 {
             return Err(RewardErrorCode::InvalidAmount);
         }
@@ -1486,6 +1489,9 @@ impl RewardManager {
         player_address: Address,
         reward_config: RewardConfig,
     ) -> Result<(), RewardErrorCode> {
+        // Issue #628: distribution is blocked by its own pause flag or the global stop.
+        Self::ensure_distribution_allowed(&env)?;
+
         let pool_config =
             Storage::get_pool_config(&env, hunt_id).ok_or(RewardErrorCode::PoolNotFound)?;
 
@@ -1820,6 +1826,10 @@ impl RewardManager {
         env: Env,
         distributions: Vec<BatchDistributionEntry>,
     ) -> Result<(), RewardErrorCode> {
+        // Issue #628: one check for the whole batch — a paused contract must not
+        // distribute any entry, not merely stop partway through.
+        Self::ensure_distribution_allowed(&env)?;
+
         let batch_len = distributions.len();
 
         // Reject empty batches
@@ -2335,6 +2345,9 @@ impl RewardManager {
         player_score: u64,
         total_scores: u64,
     ) -> Result<i128, RewardErrorCode> {
+        // Issue #628
+        Self::ensure_distribution_allowed(&env)?;
+
         if total_scores == 0 || player_score == 0 || player_score > total_scores {
             return Err(RewardErrorCode::InvalidScore);
         }
@@ -3010,6 +3023,99 @@ impl RewardManager {
     /// Returns whether the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
         Storage::is_paused(&env)
+    }
+
+    // ========== Granular pause (issue #628) ==========
+    //
+    // `hunty-core` can pause registrations, answers and rewards independently;
+    // reward-manager had one flag covering everything. Worse, that flag was
+    // only ever read by `emergency_withdraw` as a precondition — pausing did
+    // not actually stop funding or distribution.
+    //
+    // These split the contract's two money-moving halves so an operator can
+    // stop a suspect distribution while creators keep topping pools up, or
+    // freeze incoming funds while letting owed rewards drain. `pause()` remains
+    // the global override and still implies both.
+
+    /// Blocks pool funding. Distribution is unaffected unless separately paused.
+    pub fn pause_funding(env: Env, admin: Address) -> Result<(), RewardErrorCode> {
+        Self::require_admin(&env, &admin)?;
+        Storage::set_funding_paused(&env, true);
+        env.events()
+            .publish((symbol_short!("PAUSE_FD"),), admin.clone());
+        Ok(())
+    }
+
+    /// Resumes pool funding. Has no effect while the global pause is engaged.
+    pub fn unpause_funding(env: Env, admin: Address) -> Result<(), RewardErrorCode> {
+        Self::require_admin(&env, &admin)?;
+        Storage::set_funding_paused(&env, false);
+        env.events()
+            .publish((symbol_short!("UNPAUS_FD"),), admin.clone());
+        Ok(())
+    }
+
+    /// Blocks reward distribution. Funding is unaffected unless separately paused.
+    pub fn pause_distribution(env: Env, admin: Address) -> Result<(), RewardErrorCode> {
+        Self::require_admin(&env, &admin)?;
+        Storage::set_distribution_paused(&env, true);
+        env.events()
+            .publish((symbol_short!("PAUSE_DS"),), admin.clone());
+        Ok(())
+    }
+
+    /// Resumes reward distribution. Has no effect while the global pause is engaged.
+    pub fn unpause_distribution(env: Env, admin: Address) -> Result<(), RewardErrorCode> {
+        Self::require_admin(&env, &admin)?;
+        Storage::set_distribution_paused(&env, false);
+        env.events()
+            .publish((symbol_short!("UNPAUS_DS"),), admin.clone());
+        Ok(())
+    }
+
+    /// Effective pause state as `(global, funding, distribution)`.
+    ///
+    /// The two granular values are the *effective* ones, so they read `true`
+    /// whenever the global stop is engaged. Mirrors `HuntyCore::get_pause_state`.
+    pub fn get_pause_state(env: Env) -> (bool, bool, bool) {
+        (
+            Storage::is_paused(&env),
+            Storage::is_funding_paused(&env),
+            Storage::is_distribution_paused(&env),
+        )
+    }
+
+    /// The granular flags as stored, ignoring the global stop — lets an
+    /// operator see what will still be paused after `unpause()`.
+    pub fn get_raw_pause_flags(env: Env) -> (bool, bool) {
+        Storage::raw_pause_flags(&env)
+    }
+
+    /// Shared admin check for the pause entry points.
+    fn require_admin(env: &Env, admin: &Address) -> Result<(), RewardErrorCode> {
+        #[cfg(not(test))]
+        admin.require_auth();
+        let configured_admin = Storage::get_admin(env).ok_or(RewardErrorCode::NotInitialized)?;
+        if &configured_admin != admin {
+            return Err(RewardErrorCode::Unauthorized);
+        }
+        Ok(())
+    }
+
+    /// Rejects the call when funding is paused.
+    fn ensure_funding_allowed(env: &Env) -> Result<(), RewardErrorCode> {
+        if Storage::is_funding_paused(env) {
+            return Err(RewardErrorCode::FundingPaused);
+        }
+        Ok(())
+    }
+
+    /// Rejects the call when distribution is paused.
+    fn ensure_distribution_allowed(env: &Env) -> Result<(), RewardErrorCode> {
+        if Storage::is_distribution_paused(env) {
+            return Err(RewardErrorCode::DistributionPaused);
+        }
+        Ok(())
     }
 
     /// Emergency withdrawal: allows the admin to withdraw all funds from one or all

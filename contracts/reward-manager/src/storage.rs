@@ -43,6 +43,11 @@ impl Storage {
     const AUDIT_COUNT_KEY: soroban_sdk::Symbol = symbol_short!("AUDC");
     const AUDIT_LOG_KEY: soroban_sdk::Symbol = symbol_short!("AUDL");
     const PAUSED_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE");
+    // Granular pause flags (issue #628), mirroring the per-operation pauses
+    // hunty-core already exposes. The global PAUSED_KEY above still overrides
+    // both, so an emergency stop remains a single call.
+    const PAUSE_FUNDING_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE_FD");
+    const PAUSE_DIST_KEY: soroban_sdk::Symbol = symbol_short!("PAUSE_DS");
     const EMERGENCY_LOG_KEY: soroban_sdk::Symbol = symbol_short!("EMLOG");
 
     pub const PENDING_NFT_KEY: soroban_sdk::Symbol = symbol_short!("PNFT");
@@ -549,6 +554,59 @@ impl Storage {
             .instance()
             .get(&Self::PAUSED_KEY)
             .unwrap_or(false)
+    }
+
+    // ---- Granular pause flags (issue #628) ----
+    //
+    // `hunty-core` can pause registrations, answers and rewards independently.
+    // reward-manager had a single flag, so stopping a suspect distribution also
+    // stopped creators topping their pools up. These split the two halves.
+
+    pub fn set_funding_paused(env: &Env, paused: bool) {
+        env.storage()
+            .instance()
+            .set(&Self::PAUSE_FUNDING_KEY, &paused);
+    }
+
+    /// True when funding is blocked, either by its own flag or by the global stop.
+    pub fn is_funding_paused(env: &Env) -> bool {
+        Self::is_paused(env)
+            || env
+                .storage()
+                .instance()
+                .get(&Self::PAUSE_FUNDING_KEY)
+                .unwrap_or(false)
+    }
+
+    pub fn set_distribution_paused(env: &Env, paused: bool) {
+        env.storage().instance().set(&Self::PAUSE_DIST_KEY, &paused);
+    }
+
+    /// True when distribution is blocked, either by its own flag or by the
+    /// global stop.
+    pub fn is_distribution_paused(env: &Env) -> bool {
+        Self::is_paused(env)
+            || env
+                .storage()
+                .instance()
+                .get(&Self::PAUSE_DIST_KEY)
+                .unwrap_or(false)
+    }
+
+    /// The two granular flags on their own, ignoring the global stop. Used by
+    /// `get_pause_state` so an operator can tell a granular pause apart from an
+    /// emergency stop.
+    pub fn raw_pause_flags(env: &Env) -> (bool, bool) {
+        (
+            env.storage()
+                .instance()
+                .get(&Self::PAUSE_FUNDING_KEY)
+                .unwrap_or(false),
+            env.storage()
+                .instance()
+                .get(&Self::PAUSE_DIST_KEY)
+                .unwrap_or(false),
+        )
     }
 
     pub fn log_emergency_withdrawal(env: &Env, log_entry: &crate::EmergencyWithdrawalLogEntry) {
