@@ -1722,3 +1722,9 @@ fn test_unauthorized_cannot_mint_before_and_after_init() {
     });
     assert!(post_init.is_err());
 }
+
+#[test]
+fn nft_data_field_count_remains_constant() {
+    assert_eq!(crate::NFT_DATA_FIELD_COUNT, 8);
+    assert_eq!(std::mem::size_of::<crate::NftData>(), std::mem::size_of::<crate::NftData>());
+}
