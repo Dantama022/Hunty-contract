@@ -925,6 +925,8 @@ impl RewardManager {
 
         pool_config.creator.require_auth();
 
+        let _reentrancy_guard = ReentrancyGuard::acquire(&env)?;
+
         // Use the token address from the pool config instead of global XLM token
         let token_address = &pool_config.token_address;
 
@@ -939,18 +941,20 @@ impl RewardManager {
             return Err(RewardErrorCode::PoolBalanceOverflow);
         }
 
+        let total_deposited = Storage::get_pool_total_deposited(&env, hunt_id)
+            .checked_add(amount)
+            .ok_or(RewardErrorCode::PoolBalanceOverflow)?;
+
+        // Update pool balance and cumulative deposit total before the external
+        // token transfer, so a reentrant call observes the post-funding state
+        // rather than a stale balance (checks-effects-interactions).
+        Storage::set_pool_balance(&env, hunt_id, new_balance);
+        Storage::set_pool_total_deposited(&env, hunt_id, total_deposited);
+
         // Transfer tokens from funder to this contract
         let contract_addr = env.current_contract_address();
         let client = soroban_sdk::token::Client::new(&env, token_address);
         client.transfer(&funder, &contract_addr, &amount);
-
-        // Update pool balance and cumulative deposit total
-        Storage::set_pool_balance(&env, hunt_id, new_balance);
-
-        let total_deposited = Storage::get_pool_total_deposited(&env, hunt_id)
-            .checked_add(amount)
-            .ok_or(RewardErrorCode::PoolBalanceOverflow)?;
-        Storage::set_pool_total_deposited(&env, hunt_id, total_deposited);
 
         let target_amount = pool_config.target_amount;
         let percentage_of_target = if target_amount > 0 {
@@ -3399,3 +3403,6 @@ mod test;
 
 #[cfg(test)]
 mod multi_token_test;
+
+#[cfg(test)]
+mod fund_reentrancy_test;
