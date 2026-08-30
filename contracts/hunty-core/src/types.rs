@@ -22,6 +22,7 @@ pub struct RewardConfig {
     pub claimed_count: u32,
     pub nft_rarity: u32,
     pub nft_tier: u32,
+    pub nft_image_uri: Option<String>,
 }
 
 pub type HuntRewardConfig = RewardConfig;
@@ -295,10 +296,10 @@ impl PlayerProgress {
         }
     }
 
-    /// Pack boolean flags into a single byte
+    /// Pack boolean flags into a single u32
     #[allow(dead_code)]
-    fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u8 {
-        let mut flags = 0u8;
+    fn bools_to_flags(is_completed: bool, reward_claimed: bool) -> u32 {
+        let mut flags = 0u32;
         if is_completed {
             flags |= 0x01;
         }
@@ -460,6 +461,7 @@ impl RewardConfig {
         max_winners: u32,
         nft_rarity: u32,
         nft_tier: u32,
+        nft_image_uri: Option<String>,
     ) -> Self {
         Self {
             xlm_pool,
@@ -469,6 +471,7 @@ impl RewardConfig {
             claimed_count: 0,
             nft_rarity,
             nft_tier,
+            nft_image_uri,
         }
     }
 
